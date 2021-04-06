@@ -1,0 +1,68 @@
+{
+    "name": "SeqProbMVS",
+    "n_gpu": 2,
+    "dataset_name": "dtu",
+
+    "arch": {
+        "type": "SeqProbMVSNet",
+        "args": {
+            "refine": true,
+            "ndepths": [48, 32, 8],
+            "depth_interals_ratio": [4.0, 2.0, 1.0],
+            "share_cr": false,
+            "cr_base_chs": [8, 8, 8],
+            "grad_method": "detach",
+            "pretrained_prior": "/mnt/sdb/khang/depth-fusion/saved/models/DepthFusion/0202_232039/checkpoint-epoch19.pth",
+            "pretrained_mvs": "casmvsnet.ckpt"
+        }
+    },
+    "data_loader": {
+        "type": "DTULoader",
+        "args":{
+            "data_path": "/mnt/sdb/khang/dtu_dataset/train",
+            "data_list": "lists/dtu/train.txt",
+            "mode": "train",
+            "num_srcs": 3,
+            "num_depths": 192,
+            "interval_scale": 1.06,
+            "shuffle": true,
+            "seq_size": 7,
+            "batch_size": 4
+        }
+    },
+    "optimizer": {
+        "type": "Adam",
+        "args":{
+            "lr": 0.00005,
+            "weight_decay": 0,
+            "amsgrad": true
+        }
+    },
+    "loss": "seq_prob_loss",
+    "metrics": [
+        "mae", "rmse", "mre"
+    ],
+    "lr_scheduler": {
+        "type": "StepLR",
+        "args": {
+            "step_size": 10,
+            "gamma": 0.5
+        }
+    },
+    "trainer": {
+        "epochs": 20,
+        "seq": true,
+        "save_dir": "saved/",
+        "save_period": 1,
+        "verbosity": 2,
+        "logging_every": 100,
+        "early_stop": 20,
+        "tensorboard": false,
+        "depth_scale": 1.0,
+        "use_prior": true,
+        "use_prior_loss": false,
+        "lrepochs": "3,5,7:2",
+        "dlossw": [0.5, 1.0, 2.0],
+        "eval_freq": 1
+    }
+}
