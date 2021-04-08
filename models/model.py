@@ -3,7 +3,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 from .module import depth_regression, conf_regression, CostRegNet, FeatureNet, RefineNet, get_depth_range_samples
 from .utils.warping import homo_warping_3D
-from .prior_net import PriorNet
 
 
 Align_Corners_Range = False
