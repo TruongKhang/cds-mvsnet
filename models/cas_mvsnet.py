@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from .module import *
+from .module import depth_regression, conf_regression, FeatureNet, CostRegNet, RefineNet, get_depth_range_samples
 from models.utils.warping import homo_warping_3D
 
 Align_Corners_Range = False
@@ -57,20 +57,14 @@ class DepthNet(nn.Module):
 
         prob_volume = F.softmax(prob_volume_pre, dim=1)
         depth = depth_regression(prob_volume, depth_values=depth_values)
-
-        with torch.no_grad():
-            # photometric confidence
-            prob_volume_sum4 = 4 * F.avg_pool3d(F.pad(prob_volume.unsqueeze(1), pad=(0, 0, 0, 0, 1, 2)), (4, 1, 1), stride=1, padding=0).squeeze(1)
-            depth_index = depth_regression(prob_volume, depth_values=torch.arange(num_depth, device=prob_volume.device, dtype=torch.float)).long()
-            depth_index = depth_index.clamp(min=0, max=num_depth-1)
-            photometric_confidence = torch.gather(prob_volume_sum4, 1, depth_index.unsqueeze(1)).squeeze(1)
+        photometric_confidence = conf_regression(prob_volume)
 
         return {"depth": depth,  "photometric_confidence": photometric_confidence}
 
 
 class CascadeMVSNet(nn.Module):
-    def __init__(self, refine=False, ndepths=[48, 32, 8], depth_interals_ratio=[4, 2, 1], share_cr=False,
-                 grad_method="detach", arch_mode="fpn", cr_base_chs=[8, 8, 8]):
+    def __init__(self, refine=False, ndepths=(48, 32, 8), depth_interals_ratio=(4, 2, 1), share_cr=False,
+                 grad_method="detach", arch_mode="fpn", cr_base_chs=(8, 8, 8)):
         super(CascadeMVSNet, self).__init__()
         self.refine = refine
         self.share_cr = share_cr

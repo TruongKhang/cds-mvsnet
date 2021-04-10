@@ -2,7 +2,6 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from .prior_net import ResidualBlock, UNetSP, UNet
 import time
 import sys
 sys.path.append("..")
@@ -439,7 +438,6 @@ def conf_regression(p, n=4):
         depth_index = depth_index.clamp(min=0, max=ndepths - 1)
         conf = torch.gather(prob_volume_sum4, 1, depth_index.unsqueeze(1))
     return conf.squeeze(1)
-
 
 
 def get_cur_depth_range_samples(cur_depth, ndepth, depth_inteval_pixel, shape, max_depth=192.0, min_depth=0.0):
