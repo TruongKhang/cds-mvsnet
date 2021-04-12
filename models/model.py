@@ -30,7 +30,6 @@ class StageNet(nn.Module):
         # del ref_volume
         for src_img, src_proj in zip(src_imgs, src_projs):
             # compute epipoles
-            print(ref_proj.shape, src_proj.shape)
             fundamental_matrix = compute_Fmatrix(ref_proj, src_proj)
             ref_epipole = compute_epipole(fundamental_matrix)
             src_epipole = compute_epipole(torch.transpose(fundamental_matrix, 1, 2))
@@ -38,7 +37,6 @@ class StageNet(nn.Module):
             # extract features
             ref_fea = self.feature_net(ref_img, ref_epipole)
             src_fea = self.feature_net(src_img, src_epipole)
-            print(src_fea.shape)
             #warpped features
             src_proj_new = src_proj[:, 0].clone()
             src_proj_new[:, :3, :4] = torch.matmul(src_proj[:, 1, :3, :3], src_proj[:, 0, :3, :4])

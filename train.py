@@ -28,7 +28,7 @@ def main(config):
         "data_path": config["data_loader"]["args"]["data_path"],
         "data_list": "lists/dtu/val.txt",
         "mode": "val",
-        "num_srcs": config["data_loader"]["args"]["num_srcs"],
+        "num_srcs": 5,
         "num_depths": config["data_loader"]["args"]["num_depths"],
         "interval_scale": config["data_loader"]["args"]["interval_scale"],
         "shuffle": False,
@@ -52,7 +52,7 @@ def main(config):
     criterion = getattr(module_loss, config['loss'])
 
     # build optimizer, learning rate scheduler. delete every lines containing lr_scheduler for disabling scheduler
-    mvsnet_params = filter(lambda p: p.requires_grad, model.mvsnet_parameters)
+    mvsnet_params = filter(lambda p: p.requires_grad, model.parameters())
     mvsnet_optimizer = config.init_obj('optimizer', torch.optim, mvsnet_params)
     # mvsnet_optimizer.add_param_group({'params': filter(lambda p: p.requires_grad, model.refine_network.parameters()),
     #                                    'lr': 0.0001})

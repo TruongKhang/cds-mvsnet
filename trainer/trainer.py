@@ -90,7 +90,7 @@ class Trainer(BaseTrainer):
                 print(
                     "Epoch {}/{}, Iter {}/{}, lr {:.6f}, train loss = {:.3f}, depth loss = {:.3f}, time = {:.3f}".format(
                         epoch, self.epochs, batch_idx, len(self.data_loader),
-                        self.optimizer[0].param_groups[0]["lr"], loss, depth_loss, time.time() - start_time))
+                        self.optimizer.param_groups[0]["lr"], loss, depth_loss, time.time() - start_time))
             # del scalar_outputs, image_outputs
             self.train_metrics.update({"loss": loss.item(), "depth_loss": depth_loss.item()}, n=depth_gt.size(0))
 
