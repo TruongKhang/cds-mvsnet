@@ -1,7 +1,7 @@
 import torch
 import torch.nn.functional as F
 
-import MYTH
+# import MYTH
 
 
 def parse_intrinsics(intrinsics):
@@ -100,27 +100,27 @@ def homo_warping_3D(src_fea, src_proj, ref_proj, depth_values):
     grid = proj_xy
 
     warped_src_fea = F.grid_sample(src_fea, grid.view(batch, num_depth * height, width, 2), mode='bilinear',
-                                   padding_mode='zeros') #, align_corners=True)
+                                   padding_mode='zeros', align_corners=True)
     warped_src_fea = warped_src_fea.view(batch, channels, num_depth, height, width)
 
     return warped_src_fea
 
 
-def homo_warping_2D(depths, cfds, projs):
-    if depths.size(1) < projs.size(1):
-        # projs = torch.cat((ref_proj, projs), 1)
-        fake_depth = torch.zeros_like(depths[:, [0], ...])
-        fake_conf = torch.zeros_like(cfds[:, [0], ...])
-        depths = torch.cat((fake_depth, depths), dim=1)
-        cfds = torch.cat((fake_conf, cfds), dim=1)
-
-    intrinsics, extrinsics = projs[:, :, 1, :, :], projs[:, :, 0, :, :]
-    projs = torch.matmul(intrinsics[..., :3, :3], extrinsics[..., :3, :4])
-
-    warped_depths, warped_cfds, _ = MYTH.DepthColorAngleReprojectionNeighbours.apply(depths, cfds, projs, 1.0)
-    warped_depths = warped_depths[:, 1:, ...]
-    warped_cfds = warped_cfds[:, 1:, ...]
-    return warped_depths, warped_cfds
+# def homo_warping_2D(depths, cfds, projs):
+#     if depths.size(1) < projs.size(1):
+#         # projs = torch.cat((ref_proj, projs), 1)
+#         fake_depth = torch.zeros_like(depths[:, [0], ...])
+#         fake_conf = torch.zeros_like(cfds[:, [0], ...])
+#         depths = torch.cat((fake_depth, depths), dim=1)
+#         cfds = torch.cat((fake_conf, cfds), dim=1)
+#
+#     intrinsics, extrinsics = projs[:, :, 1, :, :], projs[:, :, 0, :, :]
+#     projs = torch.matmul(intrinsics[..., :3, :3], extrinsics[..., :3, :4])
+#
+#     warped_depths, warped_cfds, _ = MYTH.DepthColorAngleReprojectionNeighbours.apply(depths, cfds, projs, 1.0)
+#     warped_depths = warped_depths[:, 1:, ...]
+#     warped_cfds = warped_cfds[:, 1:, ...]
+#     return warped_depths, warped_cfds
 
 
 """def resample_vol(src_vol, src_proj, ref_proj, depth_values, prev_depth_values=None, begin_video=None):

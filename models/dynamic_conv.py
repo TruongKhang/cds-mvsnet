@@ -4,6 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.modules.conv import _ConvNd
 from torch.nn.modules.utils import _pair
+from time import time
 
 
 def skew_matrix(vector3d):
@@ -32,9 +33,9 @@ def compute_Fmatrix(cam_params1, cam_params2):
     proj2 = torch.matmul(intr2, rot2)
     # print(proj2.size(), cam_center1.size())
     cam_center12 = torch.matmul(proj2, cam_center1 - cam_center2)
-    print(cam_center12.size())
+    # print(cam_center12.size())
     smatrix = skew_matrix(cam_center12.squeeze(2))
-    print(smatrix.size(), proj1.size(), proj2.size())
+    # print(smatrix.size(), proj1.size(), proj2.size())
     Fmatrix = smatrix @ proj2 @ torch.inverse(proj1)
 
     return Fmatrix
@@ -49,77 +50,90 @@ def compute_epipole(Fmatrix):
     return epipole.squeeze(2)
 
 
-class GaussFilter2d(_ConvNd):
+class GaussFilter2d(nn.Module): #_ConvNd):
     def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, dilation=1,
-                 groups=1, bias=False, padding_mode='zeros', filter_type=None):
+                 groups=1, device=None):
         self.filter_size = kernel_size
-        super(GaussFilter2d, self).__init__(in_channels, out_channels, _pair(kernel_size), _pair(stride), _pair(padding),
-                                            _pair(dilation), False, _pair(0), groups, bias, padding_mode)
+        super(GaussFilter2d, self).__init__()
+        # super(GaussFilter2d, self).__init__(in_channels, out_channels, _pair(kernel_size), _pair(stride), _pair(padding),
+        #                                     _pair(dilation), False, _pair(0), groups, bias, padding_mode)
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.stride = _pair(stride)
+        self.padding = _pair(padding)
+        self.dilation = _pair(dilation)
+        self.groups = groups
 
-        y, x = torch.meshgrid([torch.arange(-(kernel_size - 1) // 2 - 1, (kernel_size - 1) // 2, dtype=torch.float32),
-                               torch.arange(-(kernel_size - 1) // 2 - 1, (kernel_size - 1) // 2, dtype=torch.float32)])
-        sigma = float(self.filter_size / 3)
+        self.y, self.x = torch.meshgrid([torch.arange(-(kernel_size - 1) // 2, (kernel_size - 1) // 2 + 1, dtype=torch.float32, device=device),
+                                         torch.arange(-(kernel_size - 1) // 2, (kernel_size - 1) // 2 + 1, dtype=torch.float32, device=device)])
+        #self.weight = torch.nn.Parameter(weight, requires_grad=False)
 
-        gauss_kernel = torch.exp(- (x**2 + y**2) / (2 * sigma**2)) / (2 * np.pi * sigma**2)
+    def forward(self, img, filter_type=None):
+        sigma = float(self.filter_size / 9 * 1.2)
+
+        gauss_kernel = torch.exp(- (self.x ** 2 + self.y ** 2) / (2 * sigma ** 2)) / (2 * np.pi * sigma ** 2)
         if filter_type == 'x':
-            self.weight = -x / (sigma**2) * gauss_kernel
+            weight = -self.x / (sigma ** 2) * gauss_kernel
         elif filter_type == 'y':
-            self.weight = -y / (sigma**2) * gauss_kernel
+            weight = -self.y / (sigma ** 2) * gauss_kernel
         elif filter_type == 'xx':
-            self.weight = (sigma**2 - x**2) / (sigma**4) * gauss_kernel
+            weight = (self.x ** 2 - sigma ** 2) / (sigma ** 4) * gauss_kernel
         elif filter_type == 'xy':
-            self.weight = x * y / (sigma**4) * gauss_kernel
+            weight = self.x * self.y / (sigma ** 4) * gauss_kernel
         elif filter_type == 'yy':
-            self.weight = (sigma ** 2 - y ** 2) / (sigma ** 4) * gauss_kernel
+            weight = (self.y ** 2 - sigma ** 2) / (sigma ** 4) * gauss_kernel
         else:
-            self.weight = gauss_kernel
-        self.weight = self.weight.unsqueeze(0).unsqueeze(0).repeat(out_channels, in_channels, 1, 1)
-
-    def forward(self, img):
-        filtered_img = F.conv2d(img, self.weight, None, self.stride, self.padding, self.dilation, self.groups)
+            weight = gauss_kernel
+        weight = weight.unsqueeze(0).unsqueeze(0).repeat(self.out_channels, self.in_channels, 1, 1) / (self.in_channels * self.out_channels)
+        filtered_img = F.conv2d(img, weight, None, self.stride, self.padding, self.dilation, self.groups)
         return filtered_img
 
 
 class DynamicConv(nn.Module):
-    def __init__(self, in_c, out_c, size_kernels=(3, 5, 7), stride=1, thresh_scale=0.01):
+    def __init__(self, in_c, out_c, size_kernels=(3, 5, 7), stride=1, bias=True, thresh_scale=0.005, **kwargs):
         super(DynamicConv, self).__init__()
         self.size_kernels = size_kernels
         self.thresh_scale = thresh_scale
-        self.convs = nn.ModuleList([nn.Conv2d(in_c, out_c, k, padding=(k-1)//2, stride=stride) for k in self.size_kernels])
+        self.convs = nn.ModuleList([nn.Conv2d(in_c, out_c, k, padding=(k-1)//2, stride=stride, bias=bias) for k in self.size_kernels])
 
     def forward(self, feature_vol, epipole=None):
-        surface = torch.mean(feature_vol.detach(), dim=1)
+        surface = torch.mean(feature_vol.detach(), dim=1, keepdim=True)
         batch_size, height, width = surface.shape[0], surface.shape[2], surface.shape[3]
         y, x = torch.meshgrid([torch.arange(0, height, dtype=torch.float32, device=surface.device),
                                torch.arange(0, width, dtype=torch.float32, device=surface.device)])
-        x, y = x.contigous(), y.contigous()
-        epipole = epipole.unsqueeze(-1).unsqueeze(-1) # [B, 2, 1, 1]
-        u = x.unsqueeze(0).unsqueeze(0) - epipole[:, [0], :, :] # [B, 1, H, W]
-        v = y.unsqueeze(0).unsqueeze(0) - epipole[:, [1], :, :] # [B, 1, H, W]
+        x, y = x.contiguous(), y.contiguous()
+        epipole_map = epipole.unsqueeze(-1).unsqueeze(-1) # [B, 2, 1, 1]
+        u = x.unsqueeze(0).unsqueeze(0) - epipole_map[:, [0], :, :] # [B, 1, H, W]
+        v = y.unsqueeze(0).unsqueeze(0) - epipole_map[:, [1], :, :] # [B, 1, H, W]
         normed_uv = torch.sqrt(u**2 + v**2)
         u, v = u / normed_uv, v / normed_uv
 
-        selected_conv = self.convs[-1]
-
+        # selected_conv = self.convs[-1]
+        filtered_result = 0.0
+        sum_mask = torch.zeros_like(surface)
         for idx, s in enumerate(self.size_kernels):
-            new_s = s * 3
-            dx = GaussFilter2d(1, 1, new_s, padding=(new_s-1)//2, filter_type='x')(surface)
-            dy = GaussFilter2d(1, 1, new_s, padding=(new_s-1)//2, filter_type='y')(surface)
-            dxx = GaussFilter2d(1, 1, new_s, padding=(new_s-1)//2, filter_type='xx')(surface)
-            dxy = GaussFilter2d(1, 1, new_s, padding=(new_s-1)//2, filter_type='xy')(surface)
-            dyy = GaussFilter2d(1, 1, new_s, padding=(new_s-1)//2, filter_type='yy')(surface)
+            # new_s = s #* 3
+            if idx == (len(self.size_kernels) - 1):
+                sum_mask += 1
+            else:
+                gauss_filter = GaussFilter2d(1, 1, s, padding=(s - 1) // 2, device=surface.device)
+                dx = gauss_filter(surface, filter_type='x')
+                dy = gauss_filter(surface, filter_type='y')
+                # dxx = gauss_filter(surface, filter_type='xx') #
+                dxx = gauss_filter(dx, filter_type='x')
+                # dxy = gauss_filter(surface, filter_type='xy')
+                dxy = gauss_filter(dx, filter_type='y')
+                # dyy = gauss_filter(surface, filter_type='yy')
+                dyy = gauss_filter(dy, filter_type='y')
 
-            E, F, G = 1 + dx**2, dx*dy, 1 + dy**2
-            normed = torch.sqrt(1 + dx**2 + dy**2)
-            L, M, N = dxx / normed, dxy / normed, dyy / normed
+                E, F, G = 1 + dx ** 2, dx * dy, 1 + dy ** 2
+                normed = torch.sqrt(E + G - 1)  # 1 + dx**2 + dy**2)
+                L, M, N = dxx / normed, dxy / normed, dyy / normed
 
-            k = (u**2*L + 2*u*v*M + v**2*N) / (u**2*E + 2*u*v*F + v**2*G)
-            if k > self.thresh_scale:
-                selected_conv = self.convs[idx]
-                break
-
-        filtered_feature = selected_conv(feature_vol)
-        return filtered_feature
+                k = (u ** 2 * L + 2 * u * v * M + v ** 2 * N) / (u ** 2 * E + 2 * u * v * F + v ** 2 * G + 1e-10)
+                sum_mask = sum_mask + (k.abs() > self.thresh_scale).float()
+            filtered_result = filtered_result + (sum_mask == 1).float() * self.convs[idx](feature_vol)
+        return filtered_result
 
 
 def read_cam_file(filename, interval_scale=1.0):
@@ -150,9 +164,9 @@ if __name__ == '__main__':
     from torchvision.transforms import ToTensor
 
     ref_img = Image.open(r"D:\lab\dtu\scan4\images\00000000.jpg")
-    ref_img = ToTensor()(ref_img)
+    ref_img = ToTensor()(ref_img).cuda()
     src_img = Image.open("D:/lab/dtu/scan4/images/00000010.jpg")
-    src_img = ToTensor()(src_img)
+    src_img = ToTensor()(src_img).cuda()
 
     ref_intr, ref_extr, _, _ = read_cam_file("D://lab/dtu/scan4/cams/00000000_cam.txt")
     src_intr, src_extr, _, _ = read_cam_file("D://lab/dtu/scan4/cams/00000010_cam.txt")
@@ -185,6 +199,30 @@ if __name__ == '__main__':
 
     print(ref_epipole / torch.sqrt((ref_epipole**2).sum()))
 
+    # gauss_filter = GaussFilter2d(3, 1, 9, padding=4, device=ref_img.device)
+    # filtered_img = gauss_filter(ref_img.unsqueeze(0), filter_type='xx')
+    import matplotlib.pyplot as plt
+    # import matplotlib
+    # cmap = matplotlib.cm.gray
+    # plt.imshow(filtered_img.squeeze(0).squeeze(0).cpu().numpy())
+    # plt.colorbar()
+    # plt.show()
+
+    from time import time
+    conv = DynamicConv(3, 1, size_kernels=(3, 5, 7), thresh_scale=0.005)
+    conv = conv.to(torch.device('cuda'))
+    t1 = time()
+    conv_img, mask = conv(ref_img.unsqueeze(0), epipole=ref_epipole)
+    t2 = time()
+    conv = nn.Conv2d(3, 1, 7, padding=3).to(torch.device('cuda'))
+    t3 = time()
+    conv_img = conv(ref_img.unsqueeze(0))
+    t4 = time()
+    print("Time of Dynamic Conv: ", t2-t1)
+    print("Time of original Conv: ", t4-t3)
+    plt.imshow(mask.squeeze(0).squeeze(0).cpu().numpy())
+    plt.colorbar()
+    plt.show()
 
 
 
