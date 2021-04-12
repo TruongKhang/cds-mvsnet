@@ -210,8 +210,6 @@ class MVSDataset(Dataset):
         mask = None
         depth_values = None
         proj_matrices = []
-        input_depths = {"stage1": [], "stage2": [], "stage3": []}
-        input_confs = {"stage1": [], "stage2": [], "stage3": []}
 
         for i, vid in enumerate(view_ids):
             # NOTE that the id in image file names is from 1 to 49 (not 0~48)
@@ -245,21 +243,6 @@ class MVSDataset(Dataset):
 
             imgs.append(img)
 
-            mask_vid = self.read_mask_hr(mask_filename_hr)
-
-            stage = "stage3"
-            in_depth_file = os.path.join(self.datapath, 'inputs/{}/{}/depth_est/{:0>3}_{}.png'.format(stage, scan, vid, light_idx))
-            in_depth = np.array(Image.open(in_depth_file), dtype=np.float32) / 10 * (mask_vid[stage] > 0.5).astype(np.float32)
-            in_conf_file = os.path.join(self.datapath, 'inputs/{}/{}/confidence/{:0>3}_{}.png'.format(stage, scan, vid, light_idx))
-            in_conf = np.array(Image.open(in_conf_file), dtype=np.float32) / 255 * (mask_vid[stage] > 0.5).astype(np.float32)
-            height, width = in_depth.shape
-            input_depths["stage1"].append(cv2.resize(in_depth, (width//4, height//4), interpolation=cv2.INTER_NEAREST))
-            input_depths["stage2"].append(cv2.resize(in_depth, (width//2, height//2), interpolation=cv2.INTER_NEAREST))
-            input_depths["stage3"].append(in_depth)
-            input_confs["stage1"].append(cv2.resize(in_conf, (width//4, height//4), interpolation=cv2.INTER_NEAREST))
-            input_confs["stage2"].append(cv2.resize(in_conf, (width//2, height//2), interpolation=cv2.INTER_NEAREST))
-            input_confs["stage3"].append(in_conf)
-
         #all
         imgs = np.stack(imgs).transpose([0, 3, 1, 2])
         #ms proj_mats
@@ -274,15 +257,10 @@ class MVSDataset(Dataset):
             "stage2": stage2_pjmats,
             "stage3": stage3_pjmats
         }
-        for stage in input_depths.keys():
-            input_depths[stage] = np.expand_dims(np.stack(input_depths[stage]), axis=1)
-            input_confs[stage] = np.expand_dims(np.stack(input_confs[stage]), axis=1)
 
         return {"imgs": imgs,
                 "proj_matrices": proj_matrices_ms,
                 "depth": depth_ms,
                 "depth_values": depth_values,
                 "mask": mask,
-                "is_begin": self.list_begin[idx],
-                "prior_depths": input_depths,
-                "prior_confs": input_confs}
+                "is_begin": self.list_begin[idx]}

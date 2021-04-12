@@ -1,19 +1,16 @@
 {
-    "name": "SeqProbMVS",
+    "name": "TAMVS",
     "n_gpu": 2,
-    "dataset_name": "dtu",
 
     "arch": {
-        "type": "SeqProbMVSNet",
+        "type": "TAMVSNet",
         "args": {
-            "refine": true,
+            "refine": false,
             "ndepths": [48, 32, 8],
             "depth_interals_ratio": [4.0, 2.0, 1.0],
             "share_cr": false,
             "cr_base_chs": [8, 8, 8],
-            "grad_method": "detach",
-            "pretrained_prior": "/mnt/sdb/khang/depth-fusion/saved/models/DepthFusion/0202_232039/checkpoint-epoch19.pth",
-            "pretrained_mvs": "casmvsnet.ckpt"
+            "grad_method": "detach"
         }
     },
     "data_loader": {
@@ -33,12 +30,12 @@
     "optimizer": {
         "type": "Adam",
         "args":{
-            "lr": 0.00005,
+            "lr": 0.001,
             "weight_decay": 0,
             "amsgrad": true
         }
     },
-    "loss": "seq_prob_loss",
+    "loss": "final_loss",
     "metrics": [
         "mae", "rmse", "mre"
     ],
@@ -59,9 +56,7 @@
         "early_stop": 20,
         "tensorboard": false,
         "depth_scale": 1.0,
-        "use_prior": true,
-        "use_prior_loss": false,
-        "lrepochs": "3,5,7:2",
+        "lrepochs": "5,10,12:2",
         "dlossw": [0.5, 1.0, 2.0],
         "eval_freq": 1
     }
