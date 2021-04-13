@@ -2,8 +2,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.nn.modules.conv import _ConvNd
-from torch.nn.modules.utils import _pair
 from time import time
 
 
@@ -50,43 +48,37 @@ def compute_epipole(Fmatrix):
     return epipole.squeeze(2)
 
 
-class GaussFilter2d(nn.Module): #_ConvNd):
+class GaussFilter2d(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, dilation=1,
                  groups=1, device=None):
         self.filter_size = kernel_size
         super(GaussFilter2d, self).__init__()
-        # super(GaussFilter2d, self).__init__(in_channels, out_channels, _pair(kernel_size), _pair(stride), _pair(padding),
-        #                                     _pair(dilation), False, _pair(0), groups, bias, padding_mode)
         self.in_channels = in_channels
         self.out_channels = out_channels
-        self.stride = _pair(stride)
-        self.padding = _pair(padding)
-        self.dilation = _pair(dilation)
+        self.stride = stride
+        self.padding = padding
+        self.dilation = dilation
         self.groups = groups
-
         self.y, self.x = torch.meshgrid([torch.arange(-(kernel_size - 1) // 2, (kernel_size - 1) // 2 + 1, dtype=torch.float32, device=device),
                                          torch.arange(-(kernel_size - 1) // 2, (kernel_size - 1) // 2 + 1, dtype=torch.float32, device=device)])
-        #self.weight = torch.nn.Parameter(weight, requires_grad=False)
 
-    def forward(self, img, filter_type=None):
+    def forward(self, img):
         sigma = float(self.filter_size / 9 * 1.2)
 
         gauss_kernel = torch.exp(- (self.x ** 2 + self.y ** 2) / (2 * sigma ** 2)) / (2 * np.pi * sigma ** 2)
-        if filter_type == 'x':
-            weight = -self.x / (sigma ** 2) * gauss_kernel
-        elif filter_type == 'y':
-            weight = -self.y / (sigma ** 2) * gauss_kernel
-        elif filter_type == 'xx':
-            weight = (self.x ** 2 - sigma ** 2) / (sigma ** 4) * gauss_kernel
-        elif filter_type == 'xy':
-            weight = self.x * self.y / (sigma ** 4) * gauss_kernel
-        elif filter_type == 'yy':
-            weight = (self.y ** 2 - sigma ** 2) / (sigma ** 4) * gauss_kernel
-        else:
-            weight = gauss_kernel
-        weight = weight.unsqueeze(0).unsqueeze(0).repeat(self.out_channels, self.in_channels, 1, 1) / (self.in_channels * self.out_channels)
-        filtered_img = F.conv2d(img, weight, None, self.stride, self.padding, self.dilation, self.groups)
-        return filtered_img
+
+        fx = -self.x / (sigma ** 2) * gauss_kernel
+        fy = -self.y / (sigma ** 2) * gauss_kernel
+        fxx = (self.x ** 2 - sigma ** 2) / (sigma ** 4) * gauss_kernel
+        fxy = self.x * self.y / (sigma ** 4) * gauss_kernel
+        fyy = (self.y ** 2 - sigma ** 2) / (sigma ** 4) * gauss_kernel
+        weight = torch.stack((fx, fy, fxx, fxy, fyy))
+        weight = weight.unsqueeze(1).repeat(1, self.in_channels, 1, 1) / self.in_channels
+        start = time()
+        filtered_results = F.conv2d(img, weight, None, self.stride, self.padding, self.dilation, self.groups)
+        print(time() - start)
+        dx, dy, dxx, dxy, dyy = torch.unbind(filtered_results, dim=1)
+        return dx, dy, dxx, dxy, dyy
 
 
 class DynamicConv(nn.Module):
@@ -111,29 +103,27 @@ class DynamicConv(nn.Module):
         # selected_conv = self.convs[-1]
         filtered_result = 0.0
         sum_mask = torch.zeros_like(surface)
+        # t11, t12, t13 = 0.0, 0.0, 0.0
         for idx, s in enumerate(self.size_kernels):
-            # new_s = s #* 3
+            new_s = s * 3
             if idx == (len(self.size_kernels) - 1):
                 sum_mask += 1
             else:
-                gauss_filter = GaussFilter2d(1, 1, s, padding=(s - 1) // 2, device=surface.device)
-                dx = gauss_filter(surface, filter_type='x')
-                dy = gauss_filter(surface, filter_type='y')
-                # dxx = gauss_filter(surface, filter_type='xx') #
-                dxx = gauss_filter(dx, filter_type='x')
-                # dxy = gauss_filter(surface, filter_type='xy')
-                dxy = gauss_filter(dx, filter_type='y')
-                # dyy = gauss_filter(surface, filter_type='yy')
-                dyy = gauss_filter(dy, filter_type='y')
-
+                # start1 = time()
+                gauss_filter = GaussFilter2d(1, 1, new_s, padding=(new_s - 1) // 2, device=surface.device)
+                dx, dy, dxx, dxy, dyy = gauss_filter(surface)
+                # start2 = time()
+                # t11 = start2 - start1 + t11
                 E, F, G = 1 + dx ** 2, dx * dy, 1 + dy ** 2
                 normed = torch.sqrt(E + G - 1)  # 1 + dx**2 + dy**2)
                 L, M, N = dxx / normed, dxy / normed, dyy / normed
-
+                # start3 = time()
+                # t12 = start3 - start2 + t12
                 k = (u ** 2 * L + 2 * u * v * M + v ** 2 * N) / (u ** 2 * E + 2 * u * v * F + v ** 2 * G + 1e-10)
                 sum_mask = sum_mask + (k.abs() > self.thresh_scale).float()
+                # t13 = time() - start3 + t13
             filtered_result = filtered_result + (sum_mask == 1).float() * self.convs[idx](feature_vol)
-        return filtered_result
+        return filtered_result #, sum_mask, t11, t12, t13
 
 
 def read_cam_file(filename, interval_scale=1.0):
@@ -209,16 +199,16 @@ if __name__ == '__main__':
     # plt.show()
 
     from time import time
-    conv = DynamicConv(3, 1, size_kernels=(3, 5, 7), thresh_scale=0.005)
+    conv = DynamicConv(3, 1, size_kernels=(3, 5, 7, 9), thresh_scale=0.005)
     conv = conv.to(torch.device('cuda'))
     t1 = time()
-    conv_img, mask = conv(ref_img.unsqueeze(0), epipole=ref_epipole)
+    conv_img, mask, t11, t12, t13 = conv(ref_img.unsqueeze(0), epipole=ref_epipole)
     t2 = time()
     conv = nn.Conv2d(3, 1, 7, padding=3).to(torch.device('cuda'))
     t3 = time()
     conv_img = conv(ref_img.unsqueeze(0))
     t4 = time()
-    print("Time of Dynamic Conv: ", t2-t1)
+    print("Time of Dynamic Conv: ", t2-t1, t11, t12, t13)
     print("Time of original Conv: ", t4-t3)
     plt.imshow(mask.squeeze(0).squeeze(0).cpu().numpy())
     plt.colorbar()
