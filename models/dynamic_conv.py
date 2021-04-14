@@ -74,11 +74,11 @@ class GaussFilter2d(nn.Module):
         fyy = (self.y ** 2 - sigma ** 2) / (sigma ** 4) * gauss_kernel
         weight = torch.stack((fx, fy, fxx, fxy, fyy))
         weight = weight.unsqueeze(1).repeat(1, self.in_channels, 1, 1) / self.in_channels
-        start = time()
+        #start = time()
         filtered_results = F.conv2d(img, weight, None, self.stride, self.padding, self.dilation, self.groups)
-        print(time() - start)
+        #print(time() - start)
         dx, dy, dxx, dxy, dyy = torch.unbind(filtered_results, dim=1)
-        return dx, dy, dxx, dxy, dyy
+        return dx.unsqueeze(1), dy.unsqueeze(1), dxx.unsqueeze(1), dxy.unsqueeze(1), dyy.unsqueeze(1)
 
 
 class DynamicConv(nn.Module):
@@ -112,6 +112,7 @@ class DynamicConv(nn.Module):
                 # start1 = time()
                 gauss_filter = GaussFilter2d(1, 1, new_s, padding=(new_s - 1) // 2, device=surface.device)
                 dx, dy, dxx, dxy, dyy = gauss_filter(surface)
+                # print(dx.size(), dy.size(), dxx.size())
                 # start2 = time()
                 # t11 = start2 - start1 + t11
                 E, F, G = 1 + dx ** 2, dx * dy, 1 + dy ** 2
@@ -122,6 +123,7 @@ class DynamicConv(nn.Module):
                 k = (u ** 2 * L + 2 * u * v * M + v ** 2 * N) / (u ** 2 * E + 2 * u * v * F + v ** 2 * G + 1e-10)
                 sum_mask = sum_mask + (k.abs() > self.thresh_scale).float()
                 # t13 = time() - start3 + t13
+            #print(sum_mask.size(), self.convs[idx](feature_vol).size())
             filtered_result = filtered_result + (sum_mask == 1).float() * self.convs[idx](feature_vol)
         return filtered_result #, sum_mask, t11, t12, t13
 
