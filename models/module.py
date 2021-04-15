@@ -356,9 +356,9 @@ class FeatureNet(nn.Module):
         self.arch_mode = arch_mode
         self.base_channels = base_channels
 
-        convs = [Conv2d(3, base_channels, 3, 1, padding=1, dynamic=True, bn=False)]
+        convs = [Conv2d(3, base_channels, 3, 1, padding=1, dynamic=True)]
         for _ in range(4):
-            convs.append(Conv2d(base_channels, base_channels, 3, 1, padding=1, dynamic=True, bn=False))
+            convs.append(Conv2d(base_channels, base_channels, 3, 1, padding=1, dynamic=True))
         self.convs = nn.ModuleList(convs)
         self.out = nn.Conv2d(base_channels, base_channels, 1, bias=False)
         self.out_channels = base_channels

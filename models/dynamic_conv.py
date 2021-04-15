@@ -86,7 +86,13 @@ class DynamicConv(nn.Module):
         super(DynamicConv, self).__init__()
         self.size_kernels = size_kernels
         self.thresh_scale = thresh_scale
+        self.att_convs = nn.ModuleList([nn.Conv2d(in_c, 3, k, padding=(k-1)//2, bias=False) for k in size_kernels])
         self.convs = nn.ModuleList([nn.Conv2d(in_c, out_c, k, padding=(k-1)//2, stride=stride, bias=bias) for k in self.size_kernels])
+        hidden_dim = kwargs.get("hidden_dim", 8)
+        self.att_weights = nn.Sequential(nn.Conv2d(len(size_kernels), hidden_dim, 1),
+                                         nn.ReLU(inplace=True),
+                                         nn.Conv2d(hidden_dim, len(size_kernels), 1))
+        self.temperature = kwargs.get("temperature", 0.01)
 
     def forward(self, feature_vol, epipole=None):
         surface = torch.mean(feature_vol.detach(), dim=1, keepdim=True)
@@ -103,28 +109,15 @@ class DynamicConv(nn.Module):
         # selected_conv = self.convs[-1]
         filtered_result = 0.0
         sum_mask = torch.zeros_like(surface)
-        # t11, t12, t13 = 0.0, 0.0, 0.0
+        weights = []
+        results = []
         for idx, s in enumerate(self.size_kernels):
-            new_s = s * 3
-            if idx == (len(self.size_kernels) - 1):
-                sum_mask += 1
-            else:
-                # start1 = time()
-                gauss_filter = GaussFilter2d(1, 1, new_s, padding=(new_s - 1) // 2, device=surface.device)
-                dx, dy, dxx, dxy, dyy = gauss_filter(surface)
-                # print(dx.size(), dy.size(), dxx.size())
-                # start2 = time()
-                # t11 = start2 - start1 + t11
-                E, F, G = 1 + dx ** 2, dx * dy, 1 + dy ** 2
-                normed = torch.sqrt(E + G - 1)  # 1 + dx**2 + dy**2)
-                L, M, N = dxx / normed, dxy / normed, dyy / normed
-                # start3 = time()
-                # t12 = start3 - start2 + t12
-                k = (u ** 2 * L + 2 * u * v * M + v ** 2 * N) / (u ** 2 * E + 2 * u * v * F + v ** 2 * G + 1e-10)
-                sum_mask = sum_mask + (k.abs() > self.thresh_scale).float()
-                # t13 = time() - start3 + t13
-            #print(sum_mask.size(), self.convs[idx](feature_vol).size())
-            filtered_result = filtered_result + (sum_mask == 1).float() * self.convs[idx](feature_vol)
+            curv = self.att_convs[idx](feature_vol)
+            curv = (curv * torch.cat((u**2, 2*u*v, v**2), dim=1)).mean(dim=1, keepdim=True)
+            weights.append(curv)
+            results.append(self.convs[idx](feature_vol))
+        weights = F.softmax(torch.cat(weights, dim=1) / self.temperature, dim=1)
+        filtered_result = (torch.cat(results, dim=1) * weights).sum(dim=1, keepdim=True)
         return filtered_result #, sum_mask, t11, t12, t13
 
 
@@ -152,44 +145,44 @@ def read_cam_file(filename, interval_scale=1.0):
 
 
 if __name__ == '__main__':
-    from PIL import Image
-    from torchvision.transforms import ToTensor
-
-    ref_img = Image.open(r"D:\lab\dtu\scan4\images\00000000.jpg")
-    ref_img = ToTensor()(ref_img).cuda()
-    src_img = Image.open("D:/lab/dtu/scan4/images/00000010.jpg")
-    src_img = ToTensor()(src_img).cuda()
-
-    ref_intr, ref_extr, _, _ = read_cam_file("D://lab/dtu/scan4/cams/00000000_cam.txt")
-    src_intr, src_extr, _, _ = read_cam_file("D://lab/dtu/scan4/cams/00000010_cam.txt")
-
-    ref_cam_params = torch.zeros(1, 2, 4, 4)
-    ref_cam_params[0, 0, :4, :4] = torch.tensor(ref_extr, dtype=torch.float32)
-    ref_cam_params[0, 1, :3, :3] = torch.tensor(ref_intr, dtype=torch.float32)
-    ref_cam_params = ref_cam_params.cuda()
-
-    src_cam_params = torch.zeros(1, 2, 4, 4)
-    src_cam_params[0, 0, :4, :4] = torch.tensor(src_extr, dtype=torch.float32)
-    src_cam_params[0, 1, :3, :3] = torch.tensor(src_intr, dtype=torch.float32)
-    src_cam_params = src_cam_params.cuda()
-
-    Fmatrix = compute_Fmatrix(ref_cam_params, src_cam_params)
-    ref_epipole = compute_epipole(Fmatrix)
-    src_epipole = compute_epipole(torch.transpose(Fmatrix, 1, 2))
-    print("reference epipole: ", ref_epipole)
-    print("src epipole: ", src_epipole)
-
-    # compare with opencv result
-    import cv2
-    np_Fmatrix = Fmatrix[0].cpu().numpy()
-    src_line = cv2.computeCorrespondEpilines(np.zeros((1, 1, 2)), 1, np_Fmatrix)
-    src_line = src_line.reshape(-1, 3)
-    src_point = np.array([0, -src_line[0][2] / src_line[0][1]], dtype=np.float32)
-    ref_line = cv2.computeCorrespondEpilines(src_point.reshape((1, 1, 2)), 2, np_Fmatrix)
-    ref_line = ref_line.reshape(-1, 3)
-    print(ref_line[0][:2])
-
-    print(ref_epipole / torch.sqrt((ref_epipole**2).sum()))
+    # from PIL import Image
+    # from torchvision.transforms import ToTensor
+    #
+    # ref_img = Image.open(r"D:\lab\dtu\scan4\images\00000000.jpg")
+    # ref_img = ToTensor()(ref_img).cuda()
+    # src_img = Image.open("D:/lab/dtu/scan4/images/00000010.jpg")
+    # src_img = ToTensor()(src_img).cuda()
+    #
+    # ref_intr, ref_extr, _, _ = read_cam_file("D://lab/dtu/scan4/cams/00000000_cam.txt")
+    # src_intr, src_extr, _, _ = read_cam_file("D://lab/dtu/scan4/cams/00000010_cam.txt")
+    #
+    # ref_cam_params = torch.zeros(1, 2, 4, 4)
+    # ref_cam_params[0, 0, :4, :4] = torch.tensor(ref_extr, dtype=torch.float32)
+    # ref_cam_params[0, 1, :3, :3] = torch.tensor(ref_intr, dtype=torch.float32)
+    # ref_cam_params = ref_cam_params.cuda()
+    #
+    # src_cam_params = torch.zeros(1, 2, 4, 4)
+    # src_cam_params[0, 0, :4, :4] = torch.tensor(src_extr, dtype=torch.float32)
+    # src_cam_params[0, 1, :3, :3] = torch.tensor(src_intr, dtype=torch.float32)
+    # src_cam_params = src_cam_params.cuda()
+    #
+    # Fmatrix = compute_Fmatrix(ref_cam_params, src_cam_params)
+    # ref_epipole = compute_epipole(Fmatrix)
+    # src_epipole = compute_epipole(torch.transpose(Fmatrix, 1, 2))
+    # print("reference epipole: ", ref_epipole)
+    # print("src epipole: ", src_epipole)
+    #
+    # # compare with opencv result
+    # import cv2
+    # np_Fmatrix = Fmatrix[0].cpu().numpy()
+    # src_line = cv2.computeCorrespondEpilines(np.zeros((1, 1, 2)), 1, np_Fmatrix)
+    # src_line = src_line.reshape(-1, 3)
+    # src_point = np.array([0, -src_line[0][2] / src_line[0][1]], dtype=np.float32)
+    # ref_line = cv2.computeCorrespondEpilines(src_point.reshape((1, 1, 2)), 2, np_Fmatrix)
+    # ref_line = ref_line.reshape(-1, 3)
+    # print(ref_line[0][:2])
+    #
+    # print(ref_epipole / torch.sqrt((ref_epipole**2).sum()))
 
     # gauss_filter = GaussFilter2d(3, 1, 9, padding=4, device=ref_img.device)
     # filtered_img = gauss_filter(ref_img.unsqueeze(0), filter_type='xx')
@@ -199,22 +192,23 @@ if __name__ == '__main__':
     # plt.imshow(filtered_img.squeeze(0).squeeze(0).cpu().numpy())
     # plt.colorbar()
     # plt.show()
-
+    ref_img = torch.rand(3, 400, 400).float().cuda()
+    ref_epipole = torch.rand(1, 2).cuda()
     from time import time
     conv = DynamicConv(3, 1, size_kernels=(3, 5, 7, 9), thresh_scale=0.005)
     conv = conv.to(torch.device('cuda'))
     t1 = time()
-    conv_img, mask, t11, t12, t13 = conv(ref_img.unsqueeze(0), epipole=ref_epipole)
+    conv_img = conv(ref_img.unsqueeze(0), epipole=ref_epipole)
     t2 = time()
-    conv = nn.Conv2d(3, 1, 7, padding=3).to(torch.device('cuda'))
-    t3 = time()
-    conv_img = conv(ref_img.unsqueeze(0))
-    t4 = time()
-    print("Time of Dynamic Conv: ", t2-t1, t11, t12, t13)
-    print("Time of original Conv: ", t4-t3)
-    plt.imshow(mask.squeeze(0).squeeze(0).cpu().numpy())
-    plt.colorbar()
-    plt.show()
+    # conv = nn.Conv2d(3, 1, 7, padding=3).to(torch.device('cuda'))
+    # t3 = time()
+    # conv_img = conv(ref_img.unsqueeze(0))
+    # t4 = time()
+    print("Time of Dynamic Conv: ", t2-t1)
+    # print("Time of original Conv: ", t4-t3)
+    # plt.imshow(mask.squeeze(0).squeeze(0).cpu().numpy())
+    # plt.colorbar()
+    # plt.show()
 
 
 
