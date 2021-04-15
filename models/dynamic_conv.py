@@ -114,10 +114,10 @@ class DynamicConv(nn.Module):
         for idx, s in enumerate(self.size_kernels):
             curv = self.att_convs[idx](feature_vol)
             curv = (curv * torch.cat((u**2, 2*u*v, v**2), dim=1)).mean(dim=1, keepdim=True)
-            weights.append(curv)
-            results.append(self.convs[idx](feature_vol))
+            weights.append(curv.unsqueeze(1))
+            results.append(self.convs[idx](feature_vol).unsqueeze(1))
         weights = F.softmax(torch.cat(weights, dim=1) / self.temperature, dim=1)
-        filtered_result = (torch.cat(results, dim=1) * weights).sum(dim=1, keepdim=True)
+        filtered_result = (torch.cat(results, dim=1) * weights).sum(dim=1)
         return filtered_result #, sum_mask, t11, t12, t13
 
 
