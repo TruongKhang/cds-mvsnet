@@ -7,7 +7,7 @@ import sys
 sys.path.append("..")
 # from utils import local_pcd
 
-from .dynamic_conv import DynamicConv
+from models.dynamic_conv import DynamicConv
 
 
 def init_bn(module):
@@ -57,7 +57,7 @@ class Conv2d(nn.Module):
         super(Conv2d, self).__init__()
 
         if dynamic:
-            self.conv = DynamicConv(in_channels, out_channels, size_kernels=(3,5,7,9), stride=stride, bias=(not bn), **kwargs)
+            self.conv = DynamicConv(in_channels, out_channels, size_kernels=kernel_size, stride=stride, bias=(not bn), **kwargs)
         else:
             self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, stride=stride, bias=(not bn), **kwargs)
         self.dynamic = dynamic
@@ -72,14 +72,16 @@ class Conv2d(nn.Module):
     def forward(self, x):
         if self.dynamic:
             feat, epipole = x
-            x = self.conv(feat, epipole=epipole)
+            y = self.conv(feat, epipole=epipole)
         else:
-            x = self.conv(x)
+            y = self.conv(x)
+        # y = self.conv(x)
         if self.bn is not None:
-            x = self.bn(x)
+            y = self.bn(y)
         if self.relu:
-            x = F.relu(x, inplace=True)
-        return x
+            y = F.relu(y, inplace=True)
+        out = (y, x[1]) if self.dynamic else y
+        return out
 
     def init_weights(self, init_method):
         """default initialization"""
@@ -245,129 +247,90 @@ class DeConv2dFuse(nn.Module):
         return x
 
 
-# class FeatureNet(nn.Module):
-#     def __init__(self, base_channels, num_stage=3, stride=4, arch_mode="unet"):
-#         super(FeatureNet, self).__init__()
-#         assert arch_mode in ["unet", "fpn"], print("mode must be in 'unet' or 'fpn', but get:{}".format(arch_mode))
-#         print("*************feature extraction arch mode:{}****************".format(arch_mode))
-#         self.arch_mode = arch_mode
-#         self.stride = stride
-#         self.base_channels = base_channels
-#         self.num_stage = num_stage
-#
-#         self.conv0 = nn.Sequential(
-#             Conv2d(3, base_channels, 3, 1, padding=1, dynamic=True),
-#             Conv2d(base_channels, base_channels, 3, 1, padding=1, dynamic=True),
-#         )
-#
-#         self.conv1 = nn.Sequential(
-#             Conv2d(base_channels, base_channels * 2, 5, stride=2, padding=2, dynamic=True),
-#             Conv2d(base_channels * 2, base_channels * 2, 3, 1, padding=1, dynamic=True),
-#             Conv2d(base_channels * 2, base_channels * 2, 3, 1, padding=1, dynamic=True),
-#         )
-#
-#         self.conv2 = nn.Sequential(
-#             Conv2d(base_channels * 2, base_channels * 4, 5, stride=2, padding=2, dynamic=True),
-#             Conv2d(base_channels * 4, base_channels * 4, 3, 1, padding=1, dynamic=True),
-#             Conv2d(base_channels * 4, base_channels * 4, 3, 1, padding=1, dynamic=True),
-#         )
-#
-#         self.out1 = nn.Conv2d(base_channels * 4, base_channels * 4, 1, bias=False)
-#         self.out_channels = [4 * base_channels]
-#
-#         if self.arch_mode == 'unet':
-#             if num_stage == 3:
-#                 self.deconv1 = DeConv2dFuse(base_channels * 4, base_channels * 2, 3)
-#                 self.deconv2 = DeConv2dFuse(base_channels * 2, base_channels, 3)
-#
-#                 self.out2 = nn.Conv2d(base_channels * 2, base_channels * 2, 1, bias=False)
-#                 self.out3 = nn.Conv2d(base_channels, base_channels, 1, bias=False)
-#                 self.out_channels.append(2 * base_channels)
-#                 self.out_channels.append(base_channels)
-#
-#             elif num_stage == 2:
-#                 self.deconv1 = DeConv2dFuse(base_channels * 4, base_channels * 2, 3)
-#
-#                 self.out2 = nn.Conv2d(base_channels * 2, base_channels * 2, 1, bias=False)
-#                 self.out_channels.append(2 * base_channels)
-#         elif self.arch_mode == "fpn":
-#             final_chs = base_channels * 4
-#             if num_stage == 3:
-#                 self.inner1 = nn.Conv2d(base_channels * 2, final_chs, 1, bias=True)
-#                 self.inner2 = nn.Conv2d(base_channels * 1, final_chs, 1, bias=True)
-#
-#                 self.out2 = nn.Conv2d(final_chs, base_channels * 2, 3, padding=1, bias=False)
-#                 self.out3 = nn.Conv2d(final_chs, base_channels, 3, padding=1, bias=False)
-#                 self.out_channels.append(base_channels * 2)
-#                 self.out_channels.append(base_channels)
-#
-#             elif num_stage == 2:
-#                 self.inner1 = nn.Conv2d(base_channels * 2, final_chs, 1, bias=True)
-#
-#                 self.out2 = nn.Conv2d(final_chs, base_channels, 3, padding=1, bias=False)
-#                 self.out_channels.append(base_channels)
-#
-#     def forward(self, x, epipole=None):
-#         conv0 = self.conv0(x, epipole=epipole)
-#         conv1 = self.conv1(conv0, epipole=epipole)
-#         conv2 = self.conv2(conv1, epipole=epipole)
-#
-#         intra_feat = conv2
-#         outputs = {}
-#         out = self.out1(intra_feat)
-#         outputs["stage1"] = out
-#         if self.arch_mode == "unet":
-#             if self.num_stage == 3:
-#                 intra_feat = self.deconv1(conv1, intra_feat)
-#                 out = self.out2(intra_feat)
-#                 outputs["stage2"] = out
-#
-#                 intra_feat = self.deconv2(conv0, intra_feat)
-#                 out = self.out3(intra_feat)
-#                 outputs["stage3"] = out
-#
-#             elif self.num_stage == 2:
-#                 intra_feat = self.deconv1(conv1, intra_feat)
-#                 out = self.out2(intra_feat)
-#                 outputs["stage2"] = out
-#
-#         elif self.arch_mode == "fpn":
-#             if self.num_stage == 3:
-#                 intra_feat = F.interpolate(intra_feat, scale_factor=2, mode="nearest") + self.inner1(conv1)
-#                 out = self.out2(intra_feat)
-#                 outputs["stage2"] = out
-#
-#                 intra_feat = F.interpolate(intra_feat, scale_factor=2, mode="nearest") + self.inner2(conv0)
-#                 out = self.out3(intra_feat)
-#                 outputs["stage3"] = out
-#
-#             elif self.num_stage == 2:
-#                 intra_feat = F.interpolate(intra_feat, scale_factor=2, mode="nearest") + self.inner1(conv1)
-#                 out = self.out2(intra_feat)
-#                 outputs["stage2"] = out
-#
-#         return outputs
-
 class FeatureNet(nn.Module):
-    def __init__(self, base_channels, arch_mode="unet"):
+    def __init__(self, base_channels, num_stage=3, stride=4, arch_mode="unet"):
         super(FeatureNet, self).__init__()
         assert arch_mode in ["unet", "fpn"], print("mode must be in 'unet' or 'fpn', but get:{}".format(arch_mode))
         print("*************feature extraction arch mode:{}****************".format(arch_mode))
         self.arch_mode = arch_mode
+        self.stride = stride
         self.base_channels = base_channels
+        self.num_stage = num_stage
 
-        convs = [Conv2d(3, base_channels, 3, 1, padding=1, dynamic=True)]
-        for _ in range(4):
-            convs.append(Conv2d(base_channels, base_channels, 3, 1, padding=1, dynamic=True))
-        self.convs = nn.ModuleList(convs)
-        self.out = nn.Conv2d(base_channels, base_channels, 1, bias=False)
-        self.out_channels = base_channels
+        self.conv0 = nn.Sequential(
+            Conv2d(3, base_channels, (3, 5, 7), 1, dynamic=True),
+            Conv2d(base_channels, base_channels, (3, 5, 7), 1, dynamic=True),
+        )
+
+        self.downsample1 = Conv2d(base_channels, base_channels * 2, 3, stride=2, padding=1)
+        self.conv1 = nn.Sequential(
+            Conv2d(base_channels * 2, base_channels * 2, (3, 5, 7), 1, dynamic=True),
+            Conv2d(base_channels * 2, base_channels * 2, (3, 5, 7), 1, dynamic=True),
+        )
+
+        self.downsample2 = Conv2d(base_channels * 2, base_channels * 4, 3, stride=2, padding=1)
+        self.conv2 = nn.Sequential(
+            Conv2d(base_channels * 4, base_channels * 4, (3, 5, 7), 1, dynamic=True),
+            Conv2d(base_channels * 4, base_channels * 4, (3, 5, 7), 1, dynamic=True),
+        )
+
+        self.out1 = nn.Conv2d(base_channels * 4, base_channels * 4, 1, bias=False)
+        self.out_channels = [4 * base_channels]
+
+        self.inner1 = nn.Conv2d(base_channels * 6, base_channels * 2, 1, bias=True)
+        self.inner2 = nn.Conv2d(base_channels * 3, base_channels, 1, bias=True)
+
+        self.out2 = DynamicConv(base_channels * 2, base_channels * 2, size_kernels=(
+        3, 5, 7))  # nn.Conv2d(final_chs, base_channels * 2, 3, padding=1, bias=False)
+        self.out3 = DynamicConv(base_channels, base_channels,
+                                size_kernels=(3, 5, 7))  # nn.Conv2d(final_chs, base_channels, 3, padding=1, bias=False)
+        self.out_channels.append(base_channels * 2)
+        self.out_channels.append(base_channels)
 
     def forward(self, x, epipole=None):
-        for conv in self.convs:
-            x = conv((x, epipole))
-        out = self.out(x)
-        return out
+        conv0, epipole0 = self.conv0((x, epipole))
+        down_conv0, down_epipole0 = self.downsample1(conv0), epipole0 / 2
+        conv1, epipole1 = self.conv1((down_conv0, down_epipole0))
+        down_conv1, down_epipole1 = self.downsample2(conv1), epipole1 / 2
+        conv2, _ = self.conv2((down_conv1, down_epipole1))
+
+        intra_feat = conv2
+        outputs = {}
+        out = self.out1(intra_feat)
+        outputs["stage1"] = out
+
+        intra_feat = torch.cat((F.interpolate(intra_feat, scale_factor=2, mode="nearest"), conv1), dim=1)
+        intra_feat = self.inner1(intra_feat)
+        out = self.out2(intra_feat, epipole=down_epipole0)
+        outputs["stage2"] = out
+
+        intra_feat = torch.cat((F.interpolate(out, scale_factor=2, mode="nearest"), conv0), dim=1)
+        intra_feat = self.inner2(intra_feat)
+        out = self.out3(intra_feat, epipole=epipole)
+        outputs["stage3"] = out
+
+        return outputs
+
+# class FeatureNet(nn.Module):
+#     def __init__(self, base_channels, arch_mode="unet"):
+#         super(FeatureNet, self).__init__()
+#         assert arch_mode in ["unet", "fpn"], print("mode must be in 'unet' or 'fpn', but get:{}".format(arch_mode))
+#         print("*************feature extraction arch mode:{}****************".format(arch_mode))
+#         self.arch_mode = arch_mode
+#         self.base_channels = base_channels
+#
+#         convs = [Conv2d(3, base_channels, 3, 1, padding=1, dynamic=True)]
+#         for _ in range(4):
+#             convs.append(Conv2d(base_channels, base_channels, 3, 1, padding=1, dynamic=True))
+#         self.convs = nn.ModuleList(convs)
+#         self.out = nn.Conv2d(base_channels, base_channels, 1, bias=False)
+#         self.out_channels = base_channels
+#
+#     def forward(self, x, epipole=None):
+#         for conv in self.convs:
+#             x = conv((x, epipole))
+#         out = self.out(x)
+#         return out
 
 
 class CostRegNet(nn.Module):
@@ -576,16 +539,7 @@ if __name__ == "__main__":
     #     img_add = cv2.addWeighted(ref_img_np, alpha, img_np, beta, gamma)
     #     cv2.imwrite('../tmp/tmp{}.png'.format(i), np.hstack([ref_img_np, img_np, img_add])) #* ratio + img_np*(1-ratio)]))
 
-    # generator = GenerationNet(5, 8)
-    # generator.cuda()
-    # img = torch.rand(2, 3, 480, 640).cuda()
-    # prior_depth = torch.rand(2, 1, 480, 640).cuda()
-    # conf = (prior_depth > 0.5).float().cuda()
-    # gt_depth = torch.rand(2, 1, 480, 640).cuda()
-    # gt_conf = (gt_depth > 0.5).float().cuda()
-    # generator(img, prior_depth, conf, gt_depth, gt_conf)
-    # costvol, kl = generator.elbo() #generator.reconstruct()
-    #
-    # print(costvol.size(), kl)
+    feature_net = FeatureNet(8).to(torch.device('cuda'))
+    out = feature_net(torch.rand(2, 3, 512, 640).float().cuda(), torch.rand(2, 2).float().cuda())
 
-    pass
+    # pass

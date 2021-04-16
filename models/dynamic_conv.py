@@ -74,9 +74,7 @@ class GaussFilter2d(nn.Module):
         fyy = (self.y ** 2 - sigma ** 2) / (sigma ** 4) * gauss_kernel
         weight = torch.stack((fx, fy, fxx, fxy, fyy))
         weight = weight.unsqueeze(1).repeat(1, self.in_channels, 1, 1) / self.in_channels
-        #start = time()
         filtered_results = F.conv2d(img, weight, None, self.stride, self.padding, self.dilation, self.groups)
-        #print(time() - start)
         dx, dy, dxx, dxy, dyy = torch.unbind(filtered_results, dim=1)
         return dx.unsqueeze(1), dy.unsqueeze(1), dxx.unsqueeze(1), dxy.unsqueeze(1), dyy.unsqueeze(1)
 

@@ -11,32 +11,33 @@ Align_Corners_Range = False
 class StageNet(nn.Module):
     def __init__(self, base_channels):
         super(StageNet, self).__init__()
-        self.feature_net = FeatureNet(base_channels=base_channels)
+        # self.feature_net = FeatureNet(base_channels=base_channels)
 
-    def forward(self, imgs, proj_matrices, depth_values, num_depth, cost_regularization, prob_volume_init=None):
+    def forward(self, features, proj_matrices, depth_values, num_depth, cost_regularization, prob_volume_init=None):
         proj_matrices = torch.unbind(proj_matrices, 1)
-        assert len(imgs) == len(proj_matrices), "Different number of images and projection matrices"
+        assert len(features) == len(proj_matrices)-1, "Different number of images and projection matrices"
         assert depth_values.shape[1] == num_depth, "depth_values.shape[1]:{}  num_depth:{}".format(depth_values.shapep[1], num_depth)
-        num_views = len(imgs)
+        num_views = len(proj_matrices)
 
         # step 1. feature extraction
         # in: images; out: 32-channel feature maps
-        ref_img, src_imgs = imgs[0], imgs[1:]
+        # ref_img, src_imgs = imgs[0], imgs[1:]
         ref_proj, src_projs = proj_matrices[0], proj_matrices[1:]
 
         # step 2. differentiable homograph, build cost volume
         volume_sum = 0.0
         # volume_sq_sum = ref_volume ** 2
         # del ref_volume
-        for src_img, src_proj in zip(src_imgs, src_projs):
+        for feat, src_proj in zip(features, src_projs):
             # compute epipoles
-            fundamental_matrix = compute_Fmatrix(ref_proj, src_proj)
-            ref_epipole = compute_epipole(fundamental_matrix)
-            src_epipole = compute_epipole(torch.transpose(fundamental_matrix, 1, 2))
+            # fundamental_matrix = compute_Fmatrix(ref_proj, src_proj)
+            # ref_epipole = compute_epipole(fundamental_matrix)
+            # src_epipole = compute_epipole(torch.transpose(fundamental_matrix, 1, 2))
 
-            # extract features
-            ref_fea = self.feature_net(ref_img, ref_epipole)
-            src_fea = self.feature_net(src_img, src_epipole)
+            # # extract features
+            # ref_fea = self.feature_net(ref_img, ref_epipole)
+            # src_fea = self.feature_net(src_img, src_epipole)
+            ref_fea, src_fea = feat["ref"], feat["src"]
             #warpped features
             src_proj_new = src_proj[:, 0].clone()
             src_proj_new[:, :3, :4] = torch.matmul(src_proj[:, 1, :3, :3], src_proj[:, 0, :3, :4])
@@ -102,12 +103,12 @@ class TAMVSNet(nn.Module):
             }
         }
 
-        # self.feature = FeatureNet(base_channels=16, arch_mode=self.arch_mode)
-        self.stage_net = StageNet(base_channels=16)
+        self.feature = FeatureNet(base_channels=8, arch_mode=self.arch_mode)
+        self.stage_net = StageNet(base_channels=8)
         if self.share_cr:
             self.cost_regularization = CostRegNet(in_channels=self.stage_net.feature_net.out_channels, base_channels=8)
         else:
-            self.cost_regularization = nn.ModuleList([CostRegNet(in_channels=self.stage_net.feature_net.out_channels,
+            self.cost_regularization = nn.ModuleList([CostRegNet(in_channels=self.stage_net.feature_net.out_channels[i],
                                                                  base_channels=self.cr_base_chs[i])
                                                       for i in range(self.num_stage)])
         if self.refine:
@@ -119,22 +120,34 @@ class TAMVSNet(nn.Module):
         depth_interval = (depth_max - depth_min) / depth_values.size(1)
 
         # step 1. feature extraction
-        # features = []
-        # for nview_idx in range(imgs.size(1)):  #imgs shape (B, N, C, H, W)
-        #     img = imgs[:, nview_idx]
-        #     features.append(self.feature(img))
+        features = []
+        list_imgs = torch.unbind(imgs, dim=1)
+        ref_img, src_imgs = list_imgs[0], list_imgs[1:]
+        cam_params = torch.unbind(proj_matrices["stage3"], dim=1)
+        ref_proj, src_projs = cam_params[0], cam_params[1:]
+        for src_img, src_proj in zip(src_imgs, src_projs):  #imgs shape (B, N, C, H, W)
+            # compute epipoles
+            fundamental_matrix = compute_Fmatrix(ref_proj, src_proj)
+            ref_epipole = compute_epipole(fundamental_matrix)
+            src_epipole = compute_epipole(torch.transpose(fundamental_matrix, 1, 2))
+            ref_feat = self.feature(ref_img, epipole=ref_epipole)
+            src_feat = self.feature(src_img, epipole=src_epipole)
+            features.append({"ref": ref_feat, "src": src_feat})
+
         batch_size, nviews, height, width = imgs.shape[0], imgs.shape[1], imgs.shape[3], imgs.shape[4]
+        # imgs = torch.unbind(dim=1)
 
         outputs = {}
         depth, cur_depth = None, None
         for stage_idx in range(self.num_stage):
             # print("*********************stage{}*********************".format(stage_idx + 1))
             #stage feature, proj_mats, scales
-            # features_stage = [feat["stage{}".format(stage_idx + 1)] for feat in features]
+            stage_name = "stage{}".format(stage_idx + 1)
+            features_stage = [{"ref": feat["ref"][stage_name], "src": feat["src"][stage_name]} for feat in features]
             proj_matrices_stage = proj_matrices["stage{}".format(stage_idx + 1)]
             stage_scale = self.stage_infos["stage{}".format(stage_idx + 1)]["scale"]
-            imgs_stage = [F.interpolate(imgs[:, view_idx], [height // int(stage_scale), width // int(stage_scale)],
-                                        mode='bilinear', align_corners=Align_Corners_Range) for view_idx in range(nviews)]
+            # imgs_stage = [F.interpolate(imgs[:, view_idx], [height // int(stage_scale), width // int(stage_scale)],
+            #                             mode='bilinear', align_corners=Align_Corners_Range) for view_idx in range(nviews)]
 
             if depth is not None:
                 if self.grad_method == "detach":
@@ -151,7 +164,7 @@ class TAMVSNet(nn.Module):
                                                           shape=[batch_size, height, width],
                                                           max_depth=depth_max, min_depth=depth_min)
 
-            outputs_stage = self.stage_net(imgs_stage, proj_matrices_stage,
+            outputs_stage = self.stage_net(features_stage, proj_matrices_stage,
                                            depth_values=F.interpolate(depth_range_samples.unsqueeze(1),
                                                                       [self.ndepths[stage_idx], height//int(stage_scale), width//int(stage_scale)], mode='trilinear',
                                                                       align_corners=Align_Corners_Range).squeeze(1),
@@ -172,7 +185,7 @@ class TAMVSNet(nn.Module):
 
 
 if __name__ == '__main__':
-    model = CascadeMVSNet()
+    model = TAMVSNet()
     model = model.to(torch.device('cuda'))
     result = model(torch.rand(1, 3, 3, 512, 640).cuda(), {"stage1": torch.rand(1, 3, 2, 4, 4).cuda(),
                                                           "stage2": torch.rand(1, 3, 2, 4, 4).cuda(),
