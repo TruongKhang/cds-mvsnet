@@ -106,9 +106,9 @@ class TAMVSNet(nn.Module):
         self.feature = FeatureNet(base_channels=8, arch_mode=self.arch_mode)
         self.stage_net = StageNet(base_channels=8)
         if self.share_cr:
-            self.cost_regularization = CostRegNet(in_channels=self.stage_net.feature_net.out_channels, base_channels=8)
+            self.cost_regularization = CostRegNet(in_channels=self.feature.out_channels, base_channels=8)
         else:
-            self.cost_regularization = nn.ModuleList([CostRegNet(in_channels=self.stage_net.feature_net.out_channels[i],
+            self.cost_regularization = nn.ModuleList([CostRegNet(in_channels=self.feature.out_channels[i],
                                                                  base_channels=self.cr_base_chs[i])
                                                       for i in range(self.num_stage)])
         if self.refine:
