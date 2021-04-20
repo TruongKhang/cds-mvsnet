@@ -86,18 +86,18 @@ class DynamicConv(nn.Module):
         self.thresh_scale = thresh_scale
         self.att_convs = nn.ModuleList([nn.Conv2d(in_c, 3, k, padding=(k-1)//2, bias=False) for k in size_kernels])
         self.convs = nn.ModuleList([nn.Conv2d(in_c, out_c, k, padding=(k-1)//2, stride=stride, bias=bias) for k in self.size_kernels])
-        hidden_dim = kwargs.get("hidden_dim", 8)
+        hidden_dim = kwargs.get("hidden_dim", 4)
         self.att_weights = nn.Sequential(nn.Conv2d(len(size_kernels), hidden_dim, 1),
                                          nn.ReLU(inplace=True),
                                          nn.Conv2d(hidden_dim, len(size_kernels), 1))
         self.temperature = kwargs.get("temperature", 0.01)
 
     def forward(self, feature_vol, epipole=None):
-        surface = torch.mean(feature_vol.detach(), dim=1, keepdim=True)
-        batch_size, height, width = surface.shape[0], surface.shape[2], surface.shape[3]
-        y, x = torch.meshgrid([torch.arange(0, height, dtype=torch.float32, device=surface.device),
-                               torch.arange(0, width, dtype=torch.float32, device=surface.device)])
-        x, y = x.contiguous(), y.contiguous()
+        #surface = torch.mean(feature_vol.detach(), dim=1, keepdim=True)
+        batch_size, height, width = feature_vol.shape[0], feature_vol.shape[2], feature_vol.shape[3]
+        y, x = torch.meshgrid([torch.arange(0, height, dtype=torch.float32, device=feature_vol.device),
+                               torch.arange(0, width, dtype=torch.float32, device=feature_vol.device)])
+        # x, y = x.contiguous(), y.contiguous()
         epipole_map = epipole.unsqueeze(-1).unsqueeze(-1) # [B, 2, 1, 1]
         u = x.unsqueeze(0).unsqueeze(0) - epipole_map[:, [0], :, :] # [B, 1, H, W]
         v = y.unsqueeze(0).unsqueeze(0) - epipole_map[:, [1], :, :] # [B, 1, H, W]
@@ -105,17 +105,19 @@ class DynamicConv(nn.Module):
         u, v = u / normed_uv, v / normed_uv
 
         # selected_conv = self.convs[-1]
-        filtered_result = 0.0
-        sum_mask = torch.zeros_like(surface)
+        #filtered_result = 0.0
+        #sum_mask = torch.zeros_like(surface)
         weights = []
         results = []
         for idx, s in enumerate(self.size_kernels):
             curv = self.att_convs[idx](feature_vol)
             curv = (curv * torch.cat((u**2, 2*u*v, v**2), dim=1)).mean(dim=1, keepdim=True)
-            weights.append(curv.unsqueeze(1))
+            weights.append(curv) #.unsqueeze(1))
             results.append(self.convs[idx](feature_vol).unsqueeze(1))
-        weights = F.softmax(torch.cat(weights, dim=1) / self.temperature, dim=1)
-        filtered_result = (torch.cat(results, dim=1) * weights).sum(dim=1)
+        weights = torch.cat(weights, dim=1) # [B, num_kernels, H, W]
+        weights = self.att_weights(weights)
+        weights = F.softmax(weights / self.temperature, dim=1)
+        filtered_result = (torch.cat(results, dim=1) * weights.unsqueeze(2)).sum(dim=1)
         return filtered_result #, sum_mask, t11, t12, t13
 
 
