@@ -259,32 +259,32 @@ class FeatureNet(nn.Module):
 
         self.conv0 = nn.Sequential(
             Conv2d(3, base_channels, (3, 5, 7), 1, dynamic=True),
-            Conv2d(base_channels, base_channels, (3, 5, 7), 1, dynamic=True),
+            Conv2d(base_channels, base_channels, (3, 5), 1, dynamic=True),
         )
 
-        self.downsample1 = Conv2d(base_channels, base_channels * 2, 3, stride=2, padding=1)
+        self.downsample1 = Conv2d(base_channels, base_channels*2, 3, stride=2, padding=1)
         self.conv1 = nn.Sequential(
-            Conv2d(base_channels * 2, base_channels * 2, (3, 5), 1, dynamic=True),
-            Conv2d(base_channels * 2, base_channels * 2, (3, 5), 1, dynamic=True),
+            Conv2d(base_channels*2, base_channels*2, (3, 5), 1, dynamic=True),
+            Conv2d(base_channels*2, base_channels*2, (3, 5), 1, dynamic=True),
         )
 
-        self.downsample2 = Conv2d(base_channels * 2, base_channels * 4, 3, stride=2, padding=1)
+        self.downsample2 = Conv2d(base_channels*2, base_channels*4, 3, stride=2, padding=1)
         self.conv2 = nn.Sequential(
-            Conv2d(base_channels * 4, base_channels * 4, (1, 3), 1, dynamic=True),
-            Conv2d(base_channels * 4, base_channels * 4, (1, 3), 1, dynamic=True),
+            Conv2d(base_channels*4, base_channels*4, (1, 3), 1, dynamic=True),
+            Conv2d(base_channels*4, base_channels*4, (1, 3), 1, dynamic=True),
         )
 
-        self.out1 = nn.Conv2d(base_channels * 4, base_channels * 4, 1, bias=False)
-        self.out_channels = [4 * base_channels]
+        self.out1 = nn.Conv2d(base_channels*4, base_channels*4, 1, bias=False)
+        self.out_channels = [base_channels*4]
 
-        self.inner1 = nn.Conv2d(base_channels * 6, base_channels * 2, 1, bias=True)
-        self.inner2 = nn.Conv2d(base_channels * 3, base_channels, 1, bias=True)
+        self.inner1 = nn.Sequential(nn.Conv2d(base_channels * 6, base_channels*2, 1, bias=True), nn.ReLU(inplace=True))
+        self.inner2 = nn.Sequential(nn.Conv2d(base_channels * 3, base_channels, 1, bias=True), nn.ReLU(inplace=True))
 
-        self.out2 = DynamicConv(base_channels * 2, base_channels * 2, size_kernels=(
+        self.out2 = DynamicConv(base_channels*2, base_channels*2, size_kernels=(
         3, 5))  # nn.Conv2d(final_chs, base_channels * 2, 3, padding=1, bias=False)
         self.out3 = DynamicConv(base_channels, base_channels,
-                                size_kernels=(3, 5, 7))  # nn.Conv2d(final_chs, base_channels, 3, padding=1, bias=False)
-        self.out_channels.append(base_channels * 2)
+                                size_kernels=(3, 5))  # nn.Conv2d(final_chs, base_channels, 3, padding=1, bias=False)
+        self.out_channels.append(base_channels*2)
         self.out_channels.append(base_channels)
 
     def forward(self, x, epipole=None):

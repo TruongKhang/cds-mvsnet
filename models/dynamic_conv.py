@@ -80,7 +80,7 @@ class GaussFilter2d(nn.Module):
 
 
 class DynamicConv(nn.Module):
-    def __init__(self, in_c, out_c, size_kernels=(3, 5, 7), stride=1, bias=True, thresh_scale=0.005, **kwargs):
+    def __init__(self, in_c, out_c, size_kernels=(3, 5, 7), stride=1, bias=True, thresh_scale=0.01, **kwargs):
         super(DynamicConv, self).__init__()
         self.size_kernels = size_kernels
         self.thresh_scale = thresh_scale
@@ -92,12 +92,15 @@ class DynamicConv(nn.Module):
                                          nn.Conv2d(hidden_dim, len(size_kernels), 1))
         self.temperature = kwargs.get("temperature", 0.01)
 
+        for p in self.att_convs.parameters():
+            torch.nn.init.normal_(p, std=0.1)
+
     def forward(self, feature_vol, epipole=None):
         #surface = torch.mean(feature_vol.detach(), dim=1, keepdim=True)
         batch_size, height, width = feature_vol.shape[0], feature_vol.shape[2], feature_vol.shape[3]
         y, x = torch.meshgrid([torch.arange(0, height, dtype=torch.float32, device=feature_vol.device),
                                torch.arange(0, width, dtype=torch.float32, device=feature_vol.device)])
-        # x, y = x.contiguous(), y.contiguous()
+        x, y = x.contiguous(), y.contiguous()
         epipole_map = epipole.unsqueeze(-1).unsqueeze(-1) # [B, 2, 1, 1]
         u = x.unsqueeze(0).unsqueeze(0) - epipole_map[:, [0], :, :] # [B, 1, H, W]
         v = y.unsqueeze(0).unsqueeze(0) - epipole_map[:, [1], :, :] # [B, 1, H, W]
