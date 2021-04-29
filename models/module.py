@@ -288,11 +288,17 @@ class FeatureNet(nn.Module):
         self.out_channels.append(base_channels)
 
     def forward(self, x, epipole=None):
-        conv0, epipole0 = self.conv0((x, epipole))
-        down_conv0, down_epipole0 = self.downsample1(conv0), epipole0 / 2
-        conv1, epipole1 = self.conv1((down_conv0, down_epipole0))
-        down_conv1, down_epipole1 = self.downsample2(conv1), epipole1 / 2
-        conv2, _ = self.conv2((down_conv1, down_epipole1))
+        # conv0, epipole0 = self.conv0((x, epipole))
+        # down_conv0, down_epipole0 = self.downsample1(conv0), epipole0 / 2
+        # conv1, epipole1 = self.conv1((down_conv0, down_epipole0))
+        # down_conv1, down_epipole1 = self.downsample2(conv1), epipole1 / 2
+        # conv2, _ = self.conv2((down_conv1, down_epipole1))
+
+        conv0, _ = self.conv0((x, epipole))
+        down_conv0 = self.downsample1(conv0)
+        conv1, _ = self.conv1((down_conv0, None))
+        down_conv1 = self.downsample2(conv1)
+        conv2, _ = self.conv2((down_conv1, None))
 
         intra_feat = conv2
         outputs = {}
@@ -301,7 +307,7 @@ class FeatureNet(nn.Module):
 
         intra_feat = torch.cat((F.interpolate(intra_feat, scale_factor=2, mode="nearest"), conv1), dim=1)
         intra_feat = self.inner1(intra_feat)
-        out = self.out2(intra_feat, epipole=down_epipole0)
+        out = self.out2(intra_feat) #, epipole=down_epipole0)
         outputs["stage2"] = out
 
         intra_feat = torch.cat((F.interpolate(out, scale_factor=2, mode="nearest"), conv0), dim=1)
