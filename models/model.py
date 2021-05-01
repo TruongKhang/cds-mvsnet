@@ -15,21 +15,22 @@ class StageNet(nn.Module):
 
     def forward(self, features, proj_matrices, depth_values, num_depth, cost_regularization, prob_volume_init=None):
         proj_matrices = torch.unbind(proj_matrices, 1)
-        assert len(features) == len(proj_matrices), "Different number of images and projection matrices"
+        assert len(features) == len(proj_matrices)-1, "Different number of images and projection matrices"
         assert depth_values.shape[1] == num_depth, "depth_values.shape[1]:{}  num_depth:{}".format(depth_values.shapep[1], num_depth)
         num_views = len(proj_matrices)
 
         # step 1. feature extraction
         # in: images; out: 32-channel feature maps
-        ref_fea, src_feats = features[0], features[1:]
+        # ref_fea, src_feats = features[0], features[1:]
         ref_proj, src_projs = proj_matrices[0], proj_matrices[1:]
 
         # step 2. differentiable homograph, build cost volume
-        ref_volume = ref_fea.unsqueeze(2).repeat(1, 1, num_depth, 1, 1)
-        volume_sum = ref_volume
-        volume_sq_sum = ref_volume ** 2
-        del ref_volume
-        for src_fea, src_proj in zip(src_feats, src_projs):
+        # ref_volume = ref_fea.unsqueeze(2).repeat(1, 1, num_depth, 1, 1)
+        volume_sum = 0.0 # ref_volume
+        # volume_sq_sum = ref_volume ** 2
+        # del ref_volume
+        # for src_fea, src_proj in zip(features, src_projs):
+        for feat, src_proj in zip(features, src_projs):
             # compute epipoles
             # fundamental_matrix = compute_Fmatrix(ref_proj, src_proj)
             # ref_epipole = compute_epipole(fundamental_matrix)
@@ -38,7 +39,7 @@ class StageNet(nn.Module):
             # # extract features
             # ref_fea = self.feature_net(ref_img, ref_epipole)
             # src_fea = self.feature_net(src_img, src_epipole)
-            # ref_fea, src_fea = feat["ref"], feat["src"]
+            ref_fea, src_fea = feat["ref"], feat["src"]
             #warpped features
             src_proj_new = src_proj[:, 0].clone()
             src_proj_new[:, :3, :4] = torch.matmul(src_proj[:, 1, :3, :3], src_proj[:, 0, :3, :4])
@@ -46,22 +47,23 @@ class StageNet(nn.Module):
             ref_proj_new[:, :3, :4] = torch.matmul(ref_proj[:, 1, :3, :3], ref_proj[:, 0, :3, :4])
             warped_volume = homo_warping_3D(src_fea, src_proj_new, ref_proj_new, depth_values)
 
-            # ref_volume = ref_fea.unsqueeze(2).repeat(1, 1, num_depth, 1, 1)
-            # volume_sum = volume_sum + (ref_volume - warped_volume)**2
-            if self.training:
-                volume_sum = volume_sum + warped_volume
-                volume_sq_sum = volume_sq_sum + warped_volume ** 2
-            else:
-                # TODO: this is only a temporal solution to save memory, better way?
-                volume_sum += warped_volume
-                volume_sq_sum += warped_volume.pow_(2)  # the memory of warped_volume has been modified
-            del warped_volume
+            ref_volume = ref_fea.unsqueeze(2).repeat(1, 1, num_depth, 1, 1)
+            volume_sum = volume_sum + (ref_volume - warped_volume)**2
+            # if self.training:
+            #     volume_sum = volume_sum + warped_volume
+            #     volume_sq_sum = volume_sq_sum + warped_volume ** 2
+            # else:
+            #     # TODO: this is only a temporal solution to save memory, better way?
+            #     volume_sum += warped_volume
+            #     volume_sq_sum += warped_volume.pow_(2)  # the memory of warped_volume has been modified
+            # del warped_volume
         # aggregate multiple feature volumes by variance
-        volume_variance = volume_sq_sum.div_(num_views).sub_(volume_sum.div_(num_views).pow_(2))
-        # volume_mean = volume_sum / (num_views - 1)
+        # volume_variance = volume_sq_sum.div_(num_views).sub_(volume_sum.div_(num_views).pow_(2))
+        volume_mean = volume_sum / (num_views - 1)
 
         # step 3. cost volume regularization
-        cost_reg = cost_regularization(volume_variance) #volume_mean)
+        # cost_reg = cost_regularization(volume_variance)
+        cost_reg = cost_regularization(volume_mean)
         # cost_reg = F.upsample(cost_reg, [num_depth * 4, img_height, img_width], mode='trilinear')
         prob_volume_pre = cost_reg.squeeze(1)
 
@@ -122,21 +124,22 @@ class TAMVSNet(nn.Module):
 
         # step 1. feature extraction
         features = []
-        # list_imgs = torch.unbind(imgs, dim=1)
-        # ref_img, src_imgs = list_imgs[0], list_imgs[1:]
-        # cam_params = torch.unbind(proj_matrices["stage3"], dim=1)
-        # ref_proj, src_projs = cam_params[0], cam_params[1:]
-        # for src_img, src_proj in zip(src_imgs, src_projs):  #imgs shape (B, N, C, H, W)
-        #     # compute epipoles
-        #     fundamental_matrix = compute_Fmatrix(ref_proj, src_proj)
-        #     ref_epipole = compute_epipole(fundamental_matrix)
-        #     src_epipole = compute_epipole(torch.transpose(fundamental_matrix, 1, 2))
-        #     ref_feat = self.feature(ref_img, epipole=ref_epipole)
-        #     src_feat = self.feature(src_img, epipole=src_epipole)
-        #     features.append({"ref": ref_feat, "src": src_feat})
-        for nview_idx in range(imgs.size(1)):  # imgs shape (B, N, C, H, W)
-            img = imgs[:, nview_idx]
-            features.append(self.feature(img))
+        list_imgs = torch.unbind(imgs, dim=1)
+        ref_img, src_imgs = list_imgs[0], list_imgs[1:]
+        cam_params = torch.unbind(proj_matrices["stage3"], dim=1)
+        ref_proj, src_projs = cam_params[0], cam_params[1:]
+        for src_img, src_proj in zip(src_imgs, src_projs):  #imgs shape (B, N, C, H, W)
+            # compute epipoles
+            fundamental_matrix = compute_Fmatrix(ref_proj, src_proj)
+            ref_epipole = compute_epipole(fundamental_matrix)
+            src_epipole = compute_epipole(torch.transpose(fundamental_matrix, 1, 2))
+            ref_feat = self.feature(ref_img, epipole=ref_epipole)
+            src_feat = self.feature(src_img, epipole=src_epipole)
+            features.append({"ref": ref_feat, "src": src_feat})
+
+        # for nview_idx in range(imgs.size(1)):  # imgs shape (B, N, C, H, W)
+        #     img = imgs[:, nview_idx]
+        #     features.append(self.feature(img))
 
         batch_size, nviews, height, width = imgs.shape[0], imgs.shape[1], imgs.shape[3], imgs.shape[4]
         # imgs = torch.unbind(dim=1)
@@ -147,8 +150,8 @@ class TAMVSNet(nn.Module):
             # print("*********************stage{}*********************".format(stage_idx + 1))
             #stage feature, proj_mats, scales
             stage_name = "stage{}".format(stage_idx + 1)
-            # features_stage = [{"ref": feat["ref"][stage_name], "src": feat["src"][stage_name]} for feat in features]
-            features_stage = [feat[stage_name] for feat in features]
+            features_stage = [{"ref": feat["ref"][stage_name], "src": feat["src"][stage_name]} for feat in features]
+            # features_stage = [feat[stage_name] for feat in features]
             proj_matrices_stage = proj_matrices["stage{}".format(stage_idx + 1)]
             stage_scale = self.stage_infos["stage{}".format(stage_idx + 1)]["scale"]
             # imgs_stage = [F.interpolate(imgs[:, view_idx], [height // int(stage_scale), width // int(stage_scale)],
