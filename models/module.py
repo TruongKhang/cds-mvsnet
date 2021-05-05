@@ -277,8 +277,8 @@ class FeatureNet(nn.Module):
         self.out1 = nn.Conv2d(base_channels*4, base_channels*4, 1, bias=False)
         self.out_channels = [base_channels*4]
 
-        self.inner1 = nn.Sequential(nn.Conv2d(base_channels * 6, base_channels*2, 1, bias=True), nn.ReLU(inplace=True))
-        self.inner2 = nn.Sequential(nn.Conv2d(base_channels * 3, base_channels, 1, bias=True), nn.ReLU(inplace=True))
+        self.inner1 = Conv2d(base_channels * 6, base_channels * 2, 1) #nn.Sequential(nn.Conv2d(base_channels * 6, base_channels*2, 1, bias=True), nn.ReLU(inplace=True))
+        self.inner2 = Conv2d(base_channels * 3, base_channels, 1) #nn.Sequential(nn.Conv2d(base_channels * 3, base_channels, 1, bias=True), nn.ReLU(inplace=True))
 
         self.out2 = DynamicConv(base_channels*2, base_channels*2, size_kernels=(
         3, 5))  # nn.Conv2d(final_chs, base_channels * 2, 3, padding=1, bias=False)
