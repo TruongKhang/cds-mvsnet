@@ -12,8 +12,10 @@ class StageNet(nn.Module):
     def __init__(self, base_channels):
         super(StageNet, self).__init__()
         # self.feature_net = FeatureNet(base_channels=base_channels)
+        self.cos_sim = nn.CosineSimilarity(dim=1)
 
-    def forward(self, features, proj_matrices, depth_values, num_depth, cost_regularization, prob_volume_init=None):
+    def forward(self, features, proj_matrices, depth_values, num_depth, cost_regularization, prob_volume_init=None,
+                gt_depth=None, gt_mask=None):
         proj_matrices = torch.unbind(proj_matrices, 1)
         assert len(features) == len(proj_matrices)-1, "Different number of images and projection matrices"
         assert depth_values.shape[1] == num_depth, "depth_values.shape[1]:{}  num_depth:{}".format(depth_values.shapep[1], num_depth)
@@ -30,6 +32,7 @@ class StageNet(nn.Module):
         # volume_sq_sum = ref_volume ** 2
         # del ref_volume
         # for src_fea, src_proj in zip(features, src_projs):
+        feat_distance_vol = 0.0
         for feat, src_proj in zip(features, src_projs):
             # compute epipoles
             # fundamental_matrix = compute_Fmatrix(ref_proj, src_proj)
@@ -48,7 +51,13 @@ class StageNet(nn.Module):
             warped_volume = homo_warping_3D(src_fea, src_proj_new, ref_proj_new, depth_values)
 
             ref_volume = ref_fea.unsqueeze(2).repeat(1, 1, num_depth, 1, 1)
-            volume_sum = volume_sum + (ref_volume - warped_volume)**2
+            # volume_sum = volume_sum + (ref_volume - warped_volume)**2
+            volume_sum = volume_sum + self.cos_sim(ref_volume, warped_volume) # [B, D, H, W]
+
+            if gt_depth is not None:
+                gt_warped_vol = homo_warping_3D(src_fea, src_proj_new, ref_proj_new, gt_depth.unsqueeze(1).unsqueeze(1))
+                feat_distance_vol = feat_distance_vol + self.cos_sim(ref_fea.unsqueeze(2), gt_warped_vol)
+
             # if self.training:
             #     volume_sum = volume_sum + warped_volume
             #     volume_sq_sum = volume_sq_sum + warped_volume ** 2
@@ -59,7 +68,8 @@ class StageNet(nn.Module):
             # del warped_volume
         # aggregate multiple feature volumes by variance
         # volume_variance = volume_sq_sum.div_(num_views).sub_(volume_sum.div_(num_views).pow_(2))
-        volume_mean = volume_sum / (num_views - 1)
+        volume_mean = volume_sum.unsqueeze(1) / (num_views - 1)
+        feat_distance_vol = 1 - feat_distance_vol.squeeze(1) / (num_views - 1)
 
         # step 3. cost volume regularization
         # cost_reg = cost_regularization(volume_variance)
@@ -74,7 +84,7 @@ class StageNet(nn.Module):
         depth = depth_regression(prob_volume, depth_values=depth_values)
         photometric_confidence = conf_regression(prob_volume)
 
-        return {"depth": depth,  "photometric_confidence": photometric_confidence}
+        return {"depth": depth,  "photometric_confidence": photometric_confidence, "feat_distance": feat_distance_vol}
 
 
 class TAMVSNet(nn.Module):
@@ -111,13 +121,13 @@ class TAMVSNet(nn.Module):
         if self.share_cr:
             self.cost_regularization = CostRegNet(in_channels=self.feature.out_channels, base_channels=8)
         else:
-            self.cost_regularization = nn.ModuleList([CostRegNet(in_channels=self.feature.out_channels[i],
+            self.cost_regularization = nn.ModuleList([CostRegNet(in_channels=1, #self.feature.out_channels[i],
                                                                  base_channels=self.cr_base_chs[i])
                                                       for i in range(self.num_stage)])
         if self.refine:
             self.refine_network = RefineNet()
 
-    def forward(self, imgs, proj_matrices, depth_values):
+    def forward(self, imgs, proj_matrices, depth_values, gt_depths=None):
         depth_min = float(depth_values[0, 0].cpu().numpy())
         depth_max = float(depth_values[0, -1].cpu().numpy())
         depth_interval = (depth_max - depth_min) / depth_values.size(1)
@@ -154,8 +164,7 @@ class TAMVSNet(nn.Module):
             # features_stage = [feat[stage_name] for feat in features]
             proj_matrices_stage = proj_matrices["stage{}".format(stage_idx + 1)]
             stage_scale = self.stage_infos["stage{}".format(stage_idx + 1)]["scale"]
-            # imgs_stage = [F.interpolate(imgs[:, view_idx], [height // int(stage_scale), width // int(stage_scale)],
-            #                             mode='bilinear', align_corners=Align_Corners_Range) for view_idx in range(nviews)]
+            gt_depth_stage = gt_depths[stage_name] if gt_depths is not None else None
 
             if depth is not None:
                 if self.grad_method == "detach":
@@ -177,7 +186,8 @@ class TAMVSNet(nn.Module):
                                                                       [self.ndepths[stage_idx], height//int(stage_scale), width//int(stage_scale)], mode='trilinear',
                                                                       align_corners=Align_Corners_Range).squeeze(1),
                                            num_depth=self.ndepths[stage_idx],
-                                           cost_regularization=self.cost_regularization if self.share_cr else self.cost_regularization[stage_idx])
+                                           cost_regularization=self.cost_regularization if self.share_cr else self.cost_regularization[stage_idx],
+                                           gt_depth=gt_depth_stage)
 
             depth = outputs_stage['depth']
 

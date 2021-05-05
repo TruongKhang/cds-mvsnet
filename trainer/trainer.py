@@ -44,14 +44,14 @@ class Trainer(BaseTrainer):
         self.model.train()
         print('Epoch {}:'.format(epoch))
 
-        self.data_loader.dataset.generate_indices()
+        # self.data_loader.dataset.generate_indices()
         # training
         for batch_idx, sample in enumerate(self.data_loader):
             start_time = time.time()
 
             # modified from the original by Khang
             sample_cuda = tocuda(sample)
-            is_begin = sample_cuda['is_begin'].type(torch.uint8)
+            # is_begin = sample_cuda['is_begin'].type(torch.uint8)
             depth_gt_ms = sample_cuda["depth"]
             mask_ms = sample_cuda["mask"]
             num_stage = len(self.config["arch"]["args"]["ndepths"])
@@ -62,7 +62,7 @@ class Trainer(BaseTrainer):
 
             self.optimizer.zero_grad()
 
-            outputs = self.model(imgs, cam_params, sample_cuda["depth_values"])
+            outputs = self.model(imgs, cam_params, sample_cuda["depth_values"], gt_depths=depth_gt_ms)
 
             loss, depth_loss = self.criterion(outputs, depth_gt_ms, mask_ms, dlossw=self.config["trainer"]["dlossw"])
             loss.backward()
@@ -115,7 +115,7 @@ class Trainer(BaseTrainer):
 
                 # modified from the original by Khang
                 sample_cuda = tocuda(sample)
-                is_begin = sample['is_begin'].type(torch.uint8)
+                # is_begin = sample['is_begin'].type(torch.uint8)
                 depth_gt_ms = sample_cuda["depth"]
                 mask_ms = sample_cuda["mask"]
                 num_stage = len(self.config["arch"]["args"]["ndepths"])
@@ -124,7 +124,7 @@ class Trainer(BaseTrainer):
 
                 imgs, cam_params = sample_cuda["imgs"], sample_cuda["proj_matrices"]
 
-                outputs = self.model(imgs, cam_params, sample_cuda["depth_values"])
+                outputs = self.model(imgs, cam_params, sample_cuda["depth_values"], gt_depths=depth_gt_ms)
 
                 loss, depth_loss = self.criterion(outputs, depth_gt_ms, mask_ms,
                                                   dlossw=self.config["trainer"]["dlossw"])
