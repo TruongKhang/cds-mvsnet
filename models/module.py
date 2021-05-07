@@ -79,7 +79,7 @@ class Conv2d(nn.Module):
         if self.bn is not None:
             y = self.bn(y)
         if self.relu:
-            y = F.leaky_relu(y, inplace=True)
+            y = F.relu(y, inplace=True)
         out = (y, x[1]) if self.dynamic else y
         return out
 

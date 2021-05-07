@@ -78,26 +78,26 @@ def homo_warping_3D(src_fea, src_proj, ref_proj, depth_values):
     num_depth = depth_values.shape[1]
     height, width = src_fea.shape[2], src_fea.shape[3]
 
-    #with torch.no_grad():
-    proj = torch.matmul(src_proj, torch.inverse(ref_proj))
-    rot = proj[:, :3, :3]  # [B,3,3]
-    trans = proj[:, :3, 3:4]  # [B,3,1]
+    with torch.no_grad():
+        proj = torch.matmul(src_proj, torch.inverse(ref_proj))
+        rot = proj[:, :3, :3]  # [B,3,3]
+        trans = proj[:, :3, 3:4]  # [B,3,1]
 
-    y, x = torch.meshgrid([torch.arange(0, height, dtype=torch.float32, device=src_fea.device),
-                           torch.arange(0, width, dtype=torch.float32, device=src_fea.device)])
-    y, x = y.contiguous(), x.contiguous()
-    y, x = y.view(height * width), x.view(height * width)
-    xyz = torch.stack((x, y, torch.ones_like(x)))  # [3, H*W]
-    xyz = torch.unsqueeze(xyz, 0).repeat(batch, 1, 1)  # [B, 3, H*W]
-    rot_xyz = torch.matmul(rot, xyz)  # [B, 3, H*W]
-    rot_depth_xyz = rot_xyz.unsqueeze(2).repeat(1, 1, num_depth, 1) * depth_values.view(batch, 1, num_depth,
+        y, x = torch.meshgrid([torch.arange(0, height, dtype=torch.float32, device=src_fea.device),
+                               torch.arange(0, width, dtype=torch.float32, device=src_fea.device)])
+        y, x = y.contiguous(), x.contiguous()
+        y, x = y.view(height * width), x.view(height * width)
+        xyz = torch.stack((x, y, torch.ones_like(x)))  # [3, H*W]
+        xyz = torch.unsqueeze(xyz, 0).repeat(batch, 1, 1)  # [B, 3, H*W]
+        rot_xyz = torch.matmul(rot, xyz)  # [B, 3, H*W]
+        rot_depth_xyz = rot_xyz.unsqueeze(2).repeat(1, 1, num_depth, 1) * depth_values.view(batch, 1, num_depth,
                                                                                             -1)  # [B, 3, Ndepth, H*W]
-    proj_xyz = rot_depth_xyz + trans.view(batch, 3, 1, 1)  # [B, 3, Ndepth, H*W]
-    proj_xy = proj_xyz[:, :2, :, :] / proj_xyz[:, 2:3, :, :]  # [B, 2, Ndepth, H*W]
-    proj_x_normalized = proj_xy[:, 0, :, :] / ((width - 1) / 2) - 1
-    proj_y_normalized = proj_xy[:, 1, :, :] / ((height - 1) / 2) - 1
-    proj_xy = torch.stack((proj_x_normalized, proj_y_normalized), dim=3)  # [B, Ndepth, H*W, 2]
-    grid = proj_xy
+        proj_xyz = rot_depth_xyz + trans.view(batch, 3, 1, 1)  # [B, 3, Ndepth, H*W]
+        proj_xy = proj_xyz[:, :2, :, :] / proj_xyz[:, 2:3, :, :]  # [B, 2, Ndepth, H*W]
+        proj_x_normalized = proj_xy[:, 0, :, :] / ((width - 1) / 2) - 1
+        proj_y_normalized = proj_xy[:, 1, :, :] / ((height - 1) / 2) - 1
+        proj_xy = torch.stack((proj_x_normalized, proj_y_normalized), dim=3)  # [B, Ndepth, H*W, 2]
+        grid = proj_xy
 
     warped_src_fea = F.grid_sample(src_fea, grid.view(batch, num_depth * height, width, 2), mode='bilinear',
                                    padding_mode='zeros', align_corners=True)
