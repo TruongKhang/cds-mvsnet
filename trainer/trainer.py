@@ -45,6 +45,7 @@ class Trainer(BaseTrainer):
         print('Epoch {}:'.format(epoch))
 
         # self.data_loader.dataset.generate_indices()
+        outputs = None
         # training
         for batch_idx, sample in enumerate(self.data_loader):
             start_time = time.time()
@@ -95,6 +96,7 @@ class Trainer(BaseTrainer):
             self.train_metrics.update({"loss": loss.item(), "depth_loss": depth_loss.item()}, n=depth_gt.size(0))
 
         if (epoch % self.config["trainer"]["eval_freq"] == 0) or (epoch == self.epochs - 1):
+            del outputs
             self._valid_epoch(epoch)
 
         return self.train_metrics.mean()

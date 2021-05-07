@@ -25,7 +25,7 @@ class MVSDataset(Dataset):
         assert self.mode in ["train", "val", "test"]
         self.metas = self.build_list()
 
-        self.generate_img_index = []
+        """self.generate_img_index = []
         self.list_begin = []
         self.spliter = []
         total_imgs = 0
@@ -42,10 +42,10 @@ class MVSDataset(Dataset):
                 self.spliter.append((name, np.arange(num_imgs)))
         print("dataset", self.mode, "metas:", total_imgs)
 
-        self.generate_indices()
+        self.generate_indices()"""
 
     def build_list(self):
-        metas = {}
+        metas = []
         with open(self.listfile) as f:
             scans = f.readlines()
             scans = [line.rstrip() for line in scans]
@@ -71,20 +71,20 @@ class MVSDataset(Dataset):
                     # f.readline() # ignore the given source views
                     # src_views = [x for x in range(left, left+self.nviews) if x != ref_view]
                     # light conditions 0-6
-                    # for light_idx in range(7):
-                    #     metas.append((scan, light_idx, ref_view, src_views))
                     for light_idx in range(7):
+                        metas.append((scan, light_idx, ref_view, src_views))
+                    """for light_idx in range(7):
                         key = '%s_%s' % (scan, light_idx)
                         if key not in metas:
                             metas[key] = [(ref_view, src_views)]
                         else:
-                            metas[key].append((ref_view, src_views))
-        # print("dataset", self.mode, "metas:", len(metas))
+                            metas[key].append((ref_view, src_views))"""
+        print("dataset", self.mode, "metas:", len(metas))
         return metas
 
     def __len__(self):
-        return len(self.generate_img_index)
-        # return len(self.metas)
+        # return len(self.generate_img_index)
+        return len(self.metas)
 
     def read_cam_file(self, filename):
         with open(filename) as f:
@@ -197,11 +197,11 @@ class MVSDataset(Dataset):
         # print("Number samples of %s dataset: " % self.mode, len(self.generate_img_index))
 
     def __getitem__(self, idx):
-        # meta = self.metas[idx]
-        # scan, light_idx, ref_view, src_views = meta
-        key, real_idx = self.generate_img_index[idx]
-        scan, light_idx = key.split('_')[0], int(key.split('_')[1])
-        ref_view, src_views = self.metas[key][real_idx]
+        meta = self.metas[idx]
+        scan, light_idx, ref_view, src_views = meta
+        #key, real_idx = self.generate_img_index[idx]
+        #scan, light_idx = key.split('_')[0], int(key.split('_')[1])
+        #ref_view, src_views = self.metas[key][real_idx]
         # use only the reference view and first nviews-1 source views
 
         view_ids = [ref_view] + src_views
@@ -262,5 +262,5 @@ class MVSDataset(Dataset):
                 "proj_matrices": proj_matrices_ms,
                 "depth": depth_ms,
                 "depth_values": depth_values,
-                "mask": mask,
-                "is_begin": self.list_begin[idx]}
+                "mask": mask} #,
+                #"is_begin": self.list_begin[idx]}

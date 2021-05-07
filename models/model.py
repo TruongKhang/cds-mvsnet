@@ -12,7 +12,7 @@ class StageNet(nn.Module):
     def __init__(self, base_channels):
         super(StageNet, self).__init__()
         # self.feature_net = FeatureNet(base_channels=base_channels)
-        self.cos_sim = nn.CosineSimilarity(dim=1)
+        # self.cos_sim = nn.CosineSimilarity(dim=1)
 
     def forward(self, features, proj_matrices, depth_values, num_depth, cost_regularization, prob_volume_init=None,
                 gt_depth=None, gt_mask=None):
@@ -51,12 +51,12 @@ class StageNet(nn.Module):
             warped_volume = homo_warping_3D(src_fea, src_proj_new, ref_proj_new, depth_values)
 
             ref_volume = ref_fea.unsqueeze(2).repeat(1, 1, num_depth, 1, 1)
-            # volume_sum = volume_sum + (ref_volume - warped_volume)**2
-            volume_sum = volume_sum + self.cos_sim(ref_volume, warped_volume) # [B, D, H, W]
+            volume_sum = volume_sum + (ref_volume - warped_volume)**2
+            # volume_sum = volume_sum + self.cos_sim(ref_volume, warped_volume) # [B, D, H, W]
 
             if gt_depth is not None:
                 gt_warped_vol = homo_warping_3D(src_fea, src_proj_new, ref_proj_new, gt_depth.unsqueeze(1).unsqueeze(1))
-                feat_distance_vol = feat_distance_vol + self.cos_sim(ref_fea.unsqueeze(2), gt_warped_vol)
+                feat_distance_vol = feat_distance_vol + torch.sum((ref_fea - gt_warped_vol.squeeze(2))**2, dim=1) #self.cos_sim(ref_fea.unsqueeze(2), gt_warped_vol)
 
             # if self.training:
             #     volume_sum = volume_sum + warped_volume
@@ -68,8 +68,8 @@ class StageNet(nn.Module):
             # del warped_volume
         # aggregate multiple feature volumes by variance
         # volume_variance = volume_sq_sum.div_(num_views).sub_(volume_sum.div_(num_views).pow_(2))
-        volume_mean = volume_sum.unsqueeze(1) / (num_views - 1)
-        feat_distance_vol = 1 - feat_distance_vol.squeeze(1) / (num_views - 1)
+        volume_mean = volume_sum / (num_views - 1)
+        feat_distance_vol = feat_distance_vol / (num_views - 1)
 
         # step 3. cost volume regularization
         # cost_reg = cost_regularization(volume_variance)
@@ -121,7 +121,7 @@ class TAMVSNet(nn.Module):
         if self.share_cr:
             self.cost_regularization = CostRegNet(in_channels=self.feature.out_channels, base_channels=8)
         else:
-            self.cost_regularization = nn.ModuleList([CostRegNet(in_channels=1, #self.feature.out_channels[i],
+            self.cost_regularization = nn.ModuleList([CostRegNet(in_channels=self.feature.out_channels[i],
                                                                  base_channels=self.cr_base_chs[i])
                                                       for i in range(self.num_stage)])
         if self.refine:

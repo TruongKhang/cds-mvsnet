@@ -19,9 +19,10 @@ class DTULoader(DataLoader):
             self.mvs_dataset = general_eval.MVSDataset(data_path, data_list, mode, num_srcs, num_depths, interval_scale,
                                                        shuffle=shuffle, seq_size=seq_size, batch_size=batch_size,
                                                        max_h=max_h, max_w=max_w, fix_res=fix_res)
-        sampler = SequentialSampler(self.mvs_dataset)
-        super().__init__(self.mvs_dataset, batch_size=batch_size, shuffle=False, sampler=sampler,
-                         num_workers=4, pin_memory=True)
+        drop_last = True if mode == 'train' else False
+        #sampler = SequentialSampler(self.mvs_dataset)
+        super().__init__(self.mvs_dataset, batch_size=batch_size, shuffle=shuffle,
+                         num_workers=4, pin_memory=True, drop_last=drop_last)
 
         self.n_samples = len(self.mvs_dataset)
         self.device = None
