@@ -19,7 +19,7 @@ class Trainer(BaseTrainer):
         super().__init__(model, criterion, optimizer, config, writer=writer)
         self.config = config
         self.data_loader = data_loader
-        self.data_loader.set_device(self.device)
+        # self.data_loader.set_device(self.device)
         # if len_epoch is None:
             # epoch-based training
         # self.len_epoch = len(self.data_loader)
@@ -48,10 +48,10 @@ class Trainer(BaseTrainer):
         outputs = None
         # training
         for dl in self.data_loader:
-            dataset_name = dl['type']
+            dataset_name = dl.mvs_dataset.datapath
             dlossw = self.config["trainer"]["dlossw"]
-            if 'Blended' in dataset_name:
-                dlossw = [w * 10 for w in dlossw]
+            if 'blended' in dataset_name:
+                dlossw = [w * 1.0 for w in dlossw]
             for batch_idx, sample in enumerate(dl): #self.data_loader):
                 start_time = time.time()
 
@@ -68,9 +68,11 @@ class Trainer(BaseTrainer):
 
                 self.optimizer.zero_grad()
 
-                outputs = self.model(imgs, cam_params, sample_cuda["depth_values"], gt_depths=depth_gt_ms)
+                depth_values = sample_cuda["depth_values"]
+                depth_interval = depth_values[:, 1] - depth_values[:, 0]
+                outputs = self.model(imgs, cam_params, depth_values) #, gt_depths=depth_gt_ms)
 
-                loss, depth_loss = self.criterion(outputs, depth_gt_ms, mask_ms, dlossw=dlossw)
+                loss, depth_loss = self.criterion(outputs, depth_gt_ms, mask_ms, dlossw=dlossw, depth_interval=depth_interval)
                 loss.backward()
                 self.optimizer.step()
                 # self.lr_scheduler.step()
@@ -98,17 +100,17 @@ class Trainer(BaseTrainer):
         :param epoch: Integer, current training epoch.
         :return: A log that contains information about validation
         """
-        print("Validation at epoch %d, size of validation set: %d, batch_size: %d" % (epoch, len(self.valid_data_loader),
-                                                                                     self.valid_data_loader.batch_size))
+        #print("Validation at epoch %d, size of validation set: %d, batch_size: %d" % (epoch, len(self.valid_data_loader),
+        #                                                                             self.valid_data_loader.batch_size))
 
         self.model.eval()
         with torch.no_grad():
             for dl in self.valid_data_loader:
-                dataset_name = dl['type']
+                dataset_name = dl.mvs_dataset.datapath
                 self.valid_metrics.reset()
                 dlossw = self.config["trainer"]["dlossw"]
-                if 'Blended' in dataset_name:
-                    dlossw = [w * 10 for w in dlossw]
+                if 'blended' in dataset_name:
+                    dlossw = [w * 1.0 for w in dlossw]
                 for batch_idx, sample in enumerate(dl): #self.valid_data_loader):
                     start_time = time.time()
 
@@ -123,33 +125,35 @@ class Trainer(BaseTrainer):
 
                     imgs, cam_params = sample_cuda["imgs"], sample_cuda["proj_matrices"]
 
-                    outputs = self.model(imgs, cam_params, sample_cuda["depth_values"], gt_depths=depth_gt_ms)
+                    depth_values = sample_cuda["depth_values"]
+                    depth_interval = depth_values[:, 1] - depth_values[:, 0]
+                    outputs = self.model(imgs, cam_params, depth_values) #, gt_depths=depth_gt_ms)
 
-                    loss, depth_loss = self.criterion(outputs, depth_gt_ms, mask_ms, dlossw=dlossw)
+                    loss, depth_loss = self.criterion(outputs, depth_gt_ms, mask_ms, dlossw=dlossw, depth_interval=depth_interval)
 
                     depth_est = outputs["depth"].detach()
-
+                    di = depth_interval[0].item() / 2.65
                     scalar_outputs = {"loss": loss,
                                       "depth_loss": depth_loss,
                                       "abs_depth_error": AbsDepthError_metrics(depth_est, depth_gt, mask > 0.5),
-                                      "thres2mm_error": Thres_metrics(depth_est, depth_gt, mask > 0.5, 2),
-                                      "thres4mm_error": Thres_metrics(depth_est, depth_gt, mask > 0.5, 4),
-                                      "thres8mm_error": Thres_metrics(depth_est, depth_gt, mask > 0.5, 8),
-                                      "thres14mm_error": Thres_metrics(depth_est, depth_gt, mask > 0.5, 14),
-                                      "thres20mm_error": Thres_metrics(depth_est, depth_gt, mask > 0.5, 20),
+                                      "thres2mm_error": Thres_metrics(depth_est, depth_gt, mask > 0.5, di*2),
+                                      "thres4mm_error": Thres_metrics(depth_est, depth_gt, mask > 0.5, di*4),
+                                      "thres8mm_error": Thres_metrics(depth_est, depth_gt, mask > 0.5, di*8),
+                                      "thres14mm_error": Thres_metrics(depth_est, depth_gt, mask > 0.5, di*14),
+                                      "thres20mm_error": Thres_metrics(depth_est, depth_gt, mask > 0.5, di*20),
 
                                       "thres2mm_abserror": AbsDepthError_metrics(depth_est, depth_gt, mask > 0.5,
-                                                                                 [0, 2.0]),
+                                                                                 [0, di*2.0]),
                                       "thres4mm_abserror": AbsDepthError_metrics(depth_est, depth_gt, mask > 0.5,
-                                                                                 [2.0, 4.0]),
+                                                                                 [di*2.0, di*4.0]),
                                       "thres8mm_abserror": AbsDepthError_metrics(depth_est, depth_gt, mask > 0.5,
-                                                                                 [4.0, 8.0]),
+                                                                                 [di*4.0, di*8.0]),
                                       "thres14mm_abserror": AbsDepthError_metrics(depth_est, depth_gt, mask > 0.5,
-                                                                                  [8.0, 14.0]),
+                                                                                  [di*8.0, di*14.0]),
                                       "thres20mm_abserror": AbsDepthError_metrics(depth_est, depth_gt, mask > 0.5,
-                                                                                  [14.0, 20.0]),
+                                                                                  [di*14.0, di*20.0]),
                                       "thres>20mm_abserror": AbsDepthError_metrics(depth_est, depth_gt, mask > 0.5,
-                                                                                   [20.0, 1e5]),
+                                                                                   [di*20.0, 1e5]),
                                       }
 
                     """depth_est[depth_est > 1500] = 1500

@@ -88,6 +88,7 @@ class DynamicConv(nn.Module):
         self.convs = nn.ModuleList([nn.Conv2d(in_c, out_c, k, padding=(k-1)//2, stride=stride, bias=bias) for k in self.size_kernels])
         hidden_dim = kwargs.get("hidden_dim", 4)
         self.att_weights = nn.Sequential(nn.Conv2d(len(size_kernels), hidden_dim, 1),
+                                         nn.BatchNorm2d(hidden_dim),
                                          nn.ReLU(inplace=True),
                                          nn.Conv2d(hidden_dim, len(size_kernels), 1, bias=False))
         # att_weights = []
@@ -96,7 +97,7 @@ class DynamicConv(nn.Module):
         #                                      nn.ReLU(inplace=True),
         #                                      nn.Conv2d(hidden_dim, 1, 1, bias=True)))
         # self.att_weights = nn.ModuleList(att_weights)
-        self.temperature = kwargs.get("temperature", 0.1)
+        self.temperature = kwargs.get("temperature", 0.01)
 
         # for p in self.att_convs.parameters():
         #     torch.nn.init.normal_(p, std=0.1)
@@ -110,7 +111,7 @@ class DynamicConv(nn.Module):
         u = x.unsqueeze(0).unsqueeze(0) - epipole_map[:, [0], :, :] # [B, 1, H, W]
         v = y.unsqueeze(0).unsqueeze(0) - epipole_map[:, [1], :, :] # [B, 1, H, W]
         normed_uv = torch.sqrt(u**2 + v**2)
-        u, v = u / normed_uv, v / normed_uv
+        u, v = u / (normed_uv + 1e-6), v / (normed_uv + 1e-6)
 
         # selected_conv = self.convs[-1]
         #filtered_result = 0.0

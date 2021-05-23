@@ -1,6 +1,6 @@
 {
     "name": "TAMVS",
-    "n_gpu": 1,
+    "n_gpu": 2,
 
     "arch": {
         "type": "TAMVSNet",
@@ -13,11 +13,13 @@
             "grad_method": "detach"
         }
     },
-    "data_loader": {
+    "data_loader": [
+      {
         "type": "DTULoader",
         "args":{
             "data_path": "/mnt/sdb/khang/dtu_dataset/train",
-            "data_list": "lists/dtu/train.txt",
+            "train_data_list": "lists/dtu/train.txt",
+            "val_data_list": "lists/dtu/val.txt",
             "mode": "train",
             "num_srcs": 3,
             "num_depths": 192,
@@ -26,13 +28,13 @@
             "seq_size": 7,
             "batch_size": 4
         }
-    },
+      }
+    ],
     "optimizer": {
-        "type": "Adam",
+        "type": "SGD",
         "args":{
             "lr": 0.001,
-            "weight_decay": 0,
-            "amsgrad": true
+            "weight_decay": 0
         }
     },
     "loss": "final_loss",
@@ -42,12 +44,12 @@
     "lr_scheduler": {
         "type": "StepLR",
         "args": {
-            "step_size": 10,
+            "step_size": 5,
             "gamma": 0.5
         }
     },
     "trainer": {
-        "epochs": 20,
+        "epochs": 30,
         "seq": true,
         "save_dir": "saved/",
         "save_period": 1,
@@ -56,7 +58,7 @@
         "early_stop": 20,
         "tensorboard": false,
         "depth_scale": 1.0,
-        "lrepochs": "5,10,12:2",
+        "lrepochs": "10,15,20:2",
         "dlossw": [0.5, 1.0, 2.0],
         "eval_freq": 1
     }

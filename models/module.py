@@ -79,7 +79,7 @@ class Conv2d(nn.Module):
         if self.bn is not None:
             y = self.bn(y)
         if self.relu:
-            y = F.relu(y, inplace=True)
+            y = F.leaky_relu(y, 0.1, inplace=True)
         out = (y, x[1]) if self.dynamic else y
         return out
 
@@ -258,7 +258,7 @@ class FeatureNet(nn.Module):
         self.num_stage = num_stage
 
         self.conv0 = nn.Sequential(
-            Conv2d(3, base_channels, (3, 5, 7), 1, dynamic=True),
+            Conv2d(3, base_channels, (3, 7), 1, dynamic=True),
             Conv2d(base_channels, base_channels, (3, 5), 1, dynamic=True),
         )
 
@@ -274,16 +274,17 @@ class FeatureNet(nn.Module):
             Conv2d(base_channels*4, base_channels*4, (1, 3), 1, dynamic=True),
         )
 
-        self.out1 = nn.Conv2d(base_channels*4, base_channels*4, 1, bias=False)
+        self.out1 = DynamicConv(base_channels*4, base_channels*4, size_kernels=(1, 3))
+        self.act1 = nn.Sequential(nn.BatchNorm2d(base_channels*4), nn.Tanh())
         self.out_channels = [base_channels*4]
 
         self.inner1 = Conv2d(base_channels * 6, base_channels * 2, 1) #nn.Sequential(nn.Conv2d(base_channels * 6, base_channels*2, 1, bias=True), nn.ReLU(inplace=True))
         self.inner2 = Conv2d(base_channels * 3, base_channels, 1) #nn.Sequential(nn.Conv2d(base_channels * 3, base_channels, 1, bias=True), nn.ReLU(inplace=True))
 
-        self.out2 = DynamicConv(base_channels*2, base_channels*2, size_kernels=(
-        3, 5))  # nn.Conv2d(final_chs, base_channels * 2, 3, padding=1, bias=False)
-        self.out3 = DynamicConv(base_channels, base_channels,
-                                size_kernels=(3, 5))  # nn.Conv2d(final_chs, base_channels, 3, padding=1, bias=False)
+        self.out2 = DynamicConv(base_channels*2, base_channels*2, size_kernels=(3, 5))  # nn.Conv2d(final_chs, base_channels * 2, 3, padding=1, bias=False)
+        self.act2 = nn.Sequential(nn.BatchNorm2d(base_channels*2), nn.Tanh())
+        self.out3 = DynamicConv(base_channels, base_channels, size_kernels=(3, 5))  # nn.Conv2d(final_chs, base_channels, 3, padding=1, bias=False)
+        self.act3 = nn.Sequential(nn.BatchNorm2d(base_channels), nn.Tanh())
         self.out_channels.append(base_channels*2)
         self.out_channels.append(base_channels)
 
@@ -302,17 +303,17 @@ class FeatureNet(nn.Module):
 
         intra_feat = conv2
         outputs = {}
-        out = self.out1(intra_feat)
+        out = self.act1(self.out1(intra_feat, epipole=down_epipole1))
         outputs["stage1"] = out
 
         intra_feat = torch.cat((F.interpolate(intra_feat, scale_factor=2, mode="nearest"), conv1), dim=1)
         intra_feat = self.inner1(intra_feat)
-        out = self.out2(intra_feat, epipole=down_epipole0)
+        out = self.act2(self.out2(intra_feat, epipole=down_epipole0))
         outputs["stage2"] = out
 
         intra_feat = torch.cat((F.interpolate(out, scale_factor=2, mode="nearest"), conv0), dim=1)
         intra_feat = self.inner2(intra_feat)
-        out = self.out3(intra_feat, epipole=epipole)
+        out = self.act3(self.out3(intra_feat, epipole=epipole))
         outputs["stage3"] = out
 
         return outputs
@@ -441,7 +442,7 @@ def conf_regression(p, n=4):
     return conf.squeeze(1)
 
 
-def get_cur_depth_range_samples(cur_depth, ndepth, depth_inteval_pixel, shape, max_depth=192.0, min_depth=0.0):
+def get_cur_depth_range_samples(cur_depth, ndepth, depth_inteval_pixel, shape, max_depth=1000.0, min_depth=0.0):
     #shape, (B, H, W)
     #cur_depth: (B, H, W)
     #return depth_range_values: (B, D, H, W)
@@ -460,11 +461,15 @@ def get_cur_depth_range_samples(cur_depth, ndepth, depth_inteval_pixel, shape, m
                                                                   requires_grad=False).reshape(1, -1, 1,
                                                                                                1) * new_interval.unsqueeze(1))
 
-    return depth_range_samples.clamp(min=min_depth, max=max_depth)
+    delta = (depth_range_samples - min_depth).clamp(min=0)
+    depth_range_samples = min_depth + delta
+    delta = (depth_range_samples - max_depth).clamp(max=0)
+    depth_range_samples = max_depth + delta
+    return depth_range_samples #.clamp(min=min_depth, max=max_depth)
 
 
 def get_depth_range_samples(cur_depth, ndepth, depth_inteval_pixel, device, dtype, shape,
-                           max_depth=192.0, min_depth=0.0):
+                           max_depth=1000.0, min_depth=0.0):
     #shape: (B, H, W)
     #cur_depth: (B, H, W) or (B, D)
     #return depth_range_samples: (B, D, H, W)

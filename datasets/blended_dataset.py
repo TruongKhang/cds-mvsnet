@@ -1,6 +1,6 @@
 from torch.utils.data import Dataset
 import os, cv2, time
-from PIL import Image
+from PIL import Image, ImageOps
 from datasets.data_io import *
 
 
@@ -46,7 +46,7 @@ class BlendedMVSDataset(Dataset):
                         metas.append((scan, ref_view, src_views, scan))
 
         # self.interval_scale = interval_scale_dict
-        print("dataset", self.mode, "metas:", len(metas), "interval_scale:{}".format(self.interval_scale))
+        print("dataset ", self.mode, "metas: ", len(metas), "interval_scale: {}".format(self.interval_scale))
         return metas
 
     def __len__(self):
@@ -60,6 +60,8 @@ class BlendedMVSDataset(Dataset):
         extrinsics = np.fromstring(' '.join(lines[1:5]), dtype=np.float32, sep=' ').reshape((4, 4))
         # intrinsics: line [7-10), 3x3 matrix
         intrinsics = np.fromstring(' '.join(lines[7:10]), dtype=np.float32, sep=' ').reshape((3, 3))
+        intrinsics[0, 2] -= 64.0
+        intrinsics[1, 2] -= 32.0
         intrinsics[:2, :] /= 4.0
         # depth_min & depth_interval: line 11
         depth_min = float(lines[11].split()[0])
@@ -74,16 +76,25 @@ class BlendedMVSDataset(Dataset):
 
         return intrinsics, extrinsics, depth_min, depth_interval
 
+    def prepare_img(self, img):
+        h, w = img.shape[:2]
+        target_h, target_w = 512, 640
+        start_h, start_w = (h - target_h)//2, (w - target_w)//2
+        img_crop = img[start_h: start_h + target_h, start_w: start_w + target_w]
+        return img_crop
+
     def read_img(self, filename):
         img = Image.open(filename)
         # scale 0~255 to 0~1
         np_img = np.array(img, dtype=np.float32) / 255.
+        np_img = self.prepare_img(np_img)
 
         return np_img
 
     def read_depth(self, filename):
         # read pfm depth file
         depth = np.array(read_pfm(filename)[0], dtype=np.float32)
+        depth = self.prepare_img(depth)
         h, w = depth.shape
         depth_ms = {
             "stage1": cv2.resize(depth, (w // 4, h // 4), interpolation=cv2.INTER_NEAREST),
@@ -94,11 +105,12 @@ class BlendedMVSDataset(Dataset):
         return depth_ms
 
     def read_mask(self, filename):
-        img = Image.open(filename).convert('LA')
-        np_img = np.array(img, dtype=np.float32)
-        np_img = (np_img > 1).astype(np.float32)
+        #img = ImageOps.grayscale(Image.open(filename))
+        #np_img = np.array(img, dtype=np.float32)
+        depth = np.array(read_pfm(filename)[0], dtype=np.float32)
+        np_img = (depth > 0).astype(np.float32)
+        np_img = self.prepare_img(np_img)
         # np_img = cv2.resize(np_img, (768, 576), interpolation=cv2.INTER_NEAREST)
-
         h, w = np_img.shape
         np_img_ms = {
             "stage1": cv2.resize(np_img, (w//4, h//4), interpolation=cv2.INTER_NEAREST),
@@ -123,7 +135,7 @@ class BlendedMVSDataset(Dataset):
             img_filename = os.path.join(self.datapath, '{}/blended_images/{:0>8}.jpg'.format(scan, vid))
             proj_mat_filename = os.path.join(self.datapath, '{}/cams/{:0>8}_cam.txt'.format(scan, vid))
             depth_filename = os.path.join(self.datapath, '{}/rendered_depth_maps/{:0>8}.pfm'.format(scan, vid))
-            mask_filename = os.path.join(self.datapath, '{}/blended_images/{:0>8}_masked.jpg'.format(scan, vid))
+            mask_filename = os.path.join(self.datapath, '{}/rendered_depth_maps/{:0>8}.pfm'.format(scan, vid))
 
             img = self.read_img(img_filename)
             intrinsics, extrinsics, depth_min, depth_interval = self.read_cam_file(proj_mat_filename)
@@ -138,7 +150,7 @@ class BlendedMVSDataset(Dataset):
                 depth_ms = self.read_depth(depth_filename)
 
                 # get depth values
-                depth_max = depth_interval * self.ndepths + depth_min
+                depth_max = depth_interval * (self.ndepths - 0.5) + depth_min
                 depth_values = np.arange(depth_min, depth_max, depth_interval, dtype=np.float32)
 
                 mask = mask_read_ms

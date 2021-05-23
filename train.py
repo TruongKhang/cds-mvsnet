@@ -29,7 +29,7 @@ def main(config):
         train_dl_args = dl_args.copy()
         train_dl_args['data_list'] = dl_args['train_data_list']
         del train_dl_args['train_data_list'], train_dl_args['val_data_list']
-        data_loader = getattr(module_data, dl_name)(**dl_args)
+        data_loader = getattr(module_data, dl_name)(**train_dl_args)
         train_data_loaders.append(data_loader)
         # setup valid_data_loader instances
         val_kwags = {

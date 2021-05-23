@@ -84,7 +84,7 @@ class StageNet(nn.Module):
         depth = depth_regression(prob_volume, depth_values=depth_values)
         photometric_confidence = conf_regression(prob_volume)
 
-        return {"depth": depth,  "photometric_confidence": photometric_confidence, "feat_distance": feat_distance_vol}
+        return {"depth": depth,  "photometric_confidence": photometric_confidence, "feat_distance": feat_distance_vol} if gt_depth is not None else {"depth": depth,  "photometric_confidence": photometric_confidence}
 
 
 class TAMVSNet(nn.Module):
@@ -128,9 +128,9 @@ class TAMVSNet(nn.Module):
             self.refine_network = RefineNet()
 
     def forward(self, imgs, proj_matrices, depth_values, gt_depths=None):
-        depth_min = float(depth_values[0, 0].cpu().numpy())
-        depth_max = float(depth_values[0, -1].cpu().numpy())
-        depth_interval = (depth_max - depth_min) / depth_values.size(1)
+        depth_min = depth_values[:, [0]].unsqueeze(-1).unsqueeze(-1) #float(depth_values[0, 0].cpu().numpy())
+        depth_max = depth_values[:, [-1]].unsqueeze(-1).unsqueeze(-1) #float(depth_values[0, -1].cpu().numpy())
+        depth_interval = (depth_values[:, 1] - depth_values[:, 0]).unsqueeze(-1).unsqueeze(-1) #(depth_max - depth_min) / depth_values.size(1)
 
         # step 1. feature extraction
         features = []
