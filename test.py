@@ -13,9 +13,6 @@ from datasets.data_io import read_pfm, save_pfm
 from plyfile import PlyData, PlyElement
 from gipuma import gipuma_filter
 from utils import tocuda, print_args, generate_pointcloud, tensor2numpy
-from models.utils.warping import homo_warping_2D
-from trainer.data_structure import PriorState
-from models.cas_mvsnet import CascadeMVSNet
 
 from multiprocessing import Pool
 from functools import partial
@@ -175,7 +172,7 @@ def save_depth(testlist, config):
         "max_h": args.max_h,
         "max_w": args.max_w
     }
-    test_data_loader = getattr(module_data, config['data_loader']['type'])(**init_kwags)
+    test_data_loader = getattr(module_data, config['data_loader'][0]['type'])(**init_kwags)
     # model
     # build models architecture
     model = config.init_obj('arch', module_arch)
@@ -190,21 +187,11 @@ def save_depth(testlist, config):
         model = torch.nn.DataParallel(model)
     model.load_state_dict(new_state_dict)
 
-    casmvsnet = CascadeMVSNet(**config["arch"]["args"])
-    print('Loading pretrained CasMVSNet')
-    ckpt = torch.load('casmvsnet.ckpt')
-
-    casmvsnet.load_state_dict(ckpt['model'])
-
     # prepare models for testing
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = model.to(device)
     model.eval()
 
-    casmvsnet = casmvsnet.to(device)
-    casmvsnet.eval()
-
-    prior_state = PriorState(max_size=args.num_view-1)
     with torch.no_grad():
         for batch_idx, sample in enumerate(test_data_loader):
             start_time = time.time()
@@ -213,41 +200,7 @@ def save_depth(testlist, config):
             num_stage = len(config["arch"]["args"]["ndepths"])
 
             imgs, cam_params = sample_cuda["imgs"], sample_cuda["proj_matrices"]
-
-            if is_begin.sum().item() > 0:
-                prior_state.reset()
-            prior = {}
-            if config["dataset_name"] == 'dtu':
-                depths, confs = sample_cuda["prior_depths"], sample_cuda["prior_confs"]  # [B,N,1,H,W]
-                for stage in cam_params.keys():
-                    warped_depths, warped_confs = homo_warping_2D(depths[stage], confs[stage], cam_params[stage])
-                    prior[stage] = warped_depths / args.depth_scale, warped_confs
-            else:
-                if prior_state.size() == (args.num_view-1):
-                    depths, confs = prior_state.get()
-                    for stage in depths.keys():
-                        warped_depths, warped_confs = homo_warping_2D(depths[stage], confs[stage],
-                                                                      cam_params[stage])
-                        prior[stage] = warped_depths / args.depth_scale, warped_confs
-                else:
-                    prior = None
-            if prior is None:
-                outputs = casmvsnet(imgs, cam_params, sample_cuda["depth_values"])
-            else:
-                outputs = model(imgs, cam_params, sample_cuda["depth_values"], prior=prior,
-                                depth_scale=args.depth_scale)
-
-            if config["dataset_name"] != 'dtu':
-                final_depth = outputs["depth"].detach()
-                final_conf = outputs["photometric_confidence"].detach()
-                h, w = final_depth.size(1), final_depth.size(2)
-                depth_est = {"stage1": F.interpolate(final_depth.unsqueeze(1), [h // 4, w // 4], mode='nearest'),
-                             "stage2": F.interpolate(final_depth.unsqueeze(1), [h // 2, w // 2], mode='nearest'),
-                             "stage3": final_depth.unsqueeze(1)}
-                conf_est = {"stage1": F.interpolate(final_conf.unsqueeze(1), [h // 4, w // 4], mode='nearest'),
-                            "stage2": F.interpolate(final_conf.unsqueeze(1), [h // 2, w // 2], mode='nearest'),
-                            "stage3": final_conf.unsqueeze(1)}
-                prior_state.update(depth_est, conf_est)
+            outputs = model(imgs, cam_params, sample_cuda["depth_values"])
 
             end_time = time.time()
             outputs = tensor2numpy(outputs)
@@ -538,9 +491,9 @@ if __name__ == '__main__':
 
     # step2. filter saved depth maps with photometric confidence maps and geometric constraints
 
-    if args.filter_method != "gipuma":
+    #if args.filter_method != "gipuma":
     #     #support multi-processing, the default number of worker is 4
-        pcd_filter(testlist, args.num_worker)
-    else:
-        gipuma_filter(testlist, args.outdir, args.prob_threshold, args.disp_threshold, args.num_consistent,
-                      args.fusibile_exe_path)
+    #    pcd_filter(testlist, args.num_worker)
+    #else:
+    #    gipuma_filter(testlist, args.outdir, args.prob_threshold, args.disp_threshold, args.num_consistent,
+    #                  args.fusibile_exe_path)

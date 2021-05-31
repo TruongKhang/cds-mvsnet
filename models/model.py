@@ -51,7 +51,7 @@ class StageNet(nn.Module):
             warped_volume = homo_warping_3D(src_fea, src_proj_new, ref_proj_new, depth_values)
 
             ref_volume = ref_fea.unsqueeze(2).repeat(1, 1, num_depth, 1, 1)
-            volume_sum = volume_sum + (ref_volume - warped_volume)**2
+            volume_sum = volume_sum + (ref_volume * warped_volume) #(ref_volume - warped_volume)**2
             # volume_sum = volume_sum + self.cos_sim(ref_volume, warped_volume) # [B, D, H, W]
 
             if gt_depth is not None:
