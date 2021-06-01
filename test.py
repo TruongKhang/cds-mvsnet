@@ -5,6 +5,7 @@ import torch.nn.parallel
 import torch.backends.cudnn as cudnn
 import numpy as np
 import torch.nn.functional as F
+from torch.utils.data import Dataset, DataLoader, SequentialSampler
 
 from parse_config import ConfigParser
 import datasets.data_loaders as module_data
@@ -13,6 +14,7 @@ from datasets.data_io import read_pfm, save_pfm
 from plyfile import PlyData, PlyElement
 from gipuma import gipuma_filter
 from utils import tocuda, print_args, generate_pointcloud, tensor2numpy
+import fusion
 
 from multiprocessing import Pool
 from functools import partial
@@ -58,12 +60,13 @@ parser.add_argument('--save_freq', type=int, default=20, help='save freq of loca
 parser.add_argument('--filter_method', type=str, default='normal', choices=["gipuma", "normal"], help="filter method")
 
 # filter
-parser.add_argument('--conf', type=float, default=0.9, help='prob confidence')
+parser.add_argument('--conf', type=str, default='0.9', help='prob confidence')
 parser.add_argument('--thres_view', type=int, default=3, help='threshold of num view')
+parser.add_argument('--thres_disp', type=float, default=1.0, help='threshold of disparity')
 
 # filter by gimupa
 parser.add_argument('--fusibile_exe_path', type=str, default='./fusibile/fusibile')
-parser.add_argument('--prob_threshold', type=float, default='0.8')
+parser.add_argument('--prob_threshold', type=str, default='0.8')
 parser.add_argument('--disp_threshold', type=float, default='0.2')
 parser.add_argument('--num_consistent', type=float, default='3')
 
@@ -212,7 +215,7 @@ def save_depth(testlist, config):
                                                       imgs[0].shape))
 
             # save depth maps and confidence maps
-            for filename, cam, img, depth_est, photometric_confidence in zip(filenames, cams, imgs, outputs["depth"],
+            for filename, cam, img, depth_est, conf_stage1, conf_stage2, conf_stage3 in zip(filenames, cams, imgs, outputs["depth"], outputs["stage1"]["photometric_confidence"], outputs["stage2"]["photometric_confidence"],
                                                                              outputs["photometric_confidence"]):
                 img = img[0]  # ref view
                 cam = cam[0]  # ref cam
@@ -233,6 +236,10 @@ def save_depth(testlist, config):
                 # depth_est.save(depth_filename)
                 # np.save(depth_filename, depth_est)
                 # save confidence maps
+                h, w = conf_stage3.shape[0], conf_stage3.shape[1]
+                conf_stage1 = cv2.resize(conf_stage1, (w, h), interpolation=cv2.INTER_NEAREST)
+                conf_stage2 = cv2.resize(conf_stage2, (w, h), interpolation=cv2.INTER_NEAREST)
+                photometric_confidence = np.stack([conf_stage1, conf_stage2, conf_stage3]).transpose([1,2,0])
                 save_pfm(confidence_filename, photometric_confidence)
                 # save cams, img
                 write_cam(cam_filename, cam)
@@ -265,169 +272,112 @@ def save_depth(testlist, config):
     gc.collect()
 
 
-# project the reference point cloud into the source view, then project back
-def reproject_with_depth(depth_ref, intrinsics_ref, extrinsics_ref, depth_src, intrinsics_src, extrinsics_src):
-    width, height = depth_ref.shape[1], depth_ref.shape[0]
-    # step1. project reference pixels to the source view
-    # reference view x, y
-    x_ref, y_ref = np.meshgrid(np.arange(0, width), np.arange(0, height))
-    x_ref, y_ref = x_ref.reshape([-1]), y_ref.reshape([-1])
-    # reference 3D space
-    xyz_ref = np.matmul(np.linalg.inv(intrinsics_ref),
-                        np.vstack((x_ref, y_ref, np.ones_like(x_ref))) * depth_ref.reshape([-1]))
-    # source 3D space
-    xyz_src = np.matmul(np.matmul(extrinsics_src, np.linalg.inv(extrinsics_ref)),
-                        np.vstack((xyz_ref, np.ones_like(x_ref))))[:3]
-    # source view x, y
-    K_xyz_src = np.matmul(intrinsics_src, xyz_src)
-    xy_src = K_xyz_src[:2] / K_xyz_src[2:3]
+class TTDataset(Dataset):
+    def __init__(self, pair_folder, scan_folder, n_src_views=10):
+        super(TTDataset, self).__init__()
+        pair_file = os.path.join(pair_folder, "pair.txt")
+        self.scan_folder = scan_folder
+        self.pair_data = read_pair_file(pair_file)
+        self.n_src_views = n_src_views
 
-    ## step2. reproject the source view points with source view depth estimation
-    # find the depth estimation of the source view
-    x_src = xy_src[0].reshape([height, width]).astype(np.float32)
-    y_src = xy_src[1].reshape([height, width]).astype(np.float32)
-    sampled_depth_src = cv2.remap(depth_src, x_src, y_src, interpolation=cv2.INTER_LINEAR)
-    # mask = sampled_depth_src > 0
+    def __len__(self):
+        return len(self.pair_data)
 
-    # source 3D space
-    # NOTE that we should use sampled source-view depth_here to project back
-    xyz_src = np.matmul(np.linalg.inv(intrinsics_src),
-                        np.vstack((xy_src, np.ones_like(x_ref))) * sampled_depth_src.reshape([-1]))
-    # reference 3D space
-    xyz_reprojected = np.matmul(np.matmul(extrinsics_ref, np.linalg.inv(extrinsics_src)),
-                                np.vstack((xyz_src, np.ones_like(x_ref))))[:3]
-    # source view x, y, depth
-    depth_reprojected = xyz_reprojected[2].reshape([height, width]).astype(np.float32)
-    K_xyz_reprojected = np.matmul(intrinsics_ref, xyz_reprojected)
-    xy_reprojected = K_xyz_reprojected[:2] / K_xyz_reprojected[2:3]
-    x_reprojected = xy_reprojected[0].reshape([height, width]).astype(np.float32)
-    y_reprojected = xy_reprojected[1].reshape([height, width]).astype(np.float32)
+    def __getitem__(self, idx):
+        id_ref, id_srcs = self.pair_data[idx]
+        id_srcs = id_srcs[:self.n_src_views]
 
-    return depth_reprojected, x_reprojected, y_reprojected, x_src, y_src
+        ref_intrinsics, ref_extrinsics = read_camera_parameters(
+            os.path.join(self.scan_folder, 'cams/{:0>8}_cam.txt'.format(id_ref)))
+        ref_cam = np.zeros((2, 4, 4), dtype=np.float32)
+        ref_cam[0] = ref_extrinsics
+        ref_cam[1, :3, :3] = ref_intrinsics
+        ref_cam[1, 3, 3] = 1.0
+        # load the reference image
+        ref_img = read_img(os.path.join(self.scan_folder, 'images/{:0>8}.jpg'.format(id_ref)))
+        ref_img = ref_img.transpose([2, 0, 1])
+        # load the estimated depth of the reference view
+        ref_depth_est = read_pfm(os.path.join(self.scan_folder, 'depth_est/{:0>8}.pfm'.format(id_ref)))[0]
+        ref_depth_est = np.array(ref_depth_est, dtype=np.float32)
+        # load the photometric mask of the reference view
+        confidence = read_pfm(os.path.join(self.scan_folder, 'confidence/{:0>8}.pfm'.format(id_ref)))[0]
+        confidence = np.array(confidence, dtype=np.float32).transpose([2, 0, 1])
 
-
-def check_geometric_consistency(depth_ref, intrinsics_ref, extrinsics_ref, depth_src, intrinsics_src, extrinsics_src):
-    width, height = depth_ref.shape[1], depth_ref.shape[0]
-    x_ref, y_ref = np.meshgrid(np.arange(0, width), np.arange(0, height))
-    depth_reprojected, x2d_reprojected, y2d_reprojected, x2d_src, y2d_src = reproject_with_depth(depth_ref, intrinsics_ref, extrinsics_ref,
-                                                     depth_src, intrinsics_src, extrinsics_src)
-    # check |p_reproj-p_1| < 1
-    dist = np.sqrt((x2d_reprojected - x_ref) ** 2 + (y2d_reprojected - y_ref) ** 2)
-
-    # check |d_reproj-d_1| / d_1 < 0.01
-    depth_diff = np.abs(depth_reprojected - depth_ref)
-    relative_depth_diff = depth_diff / depth_ref
-
-    mask = np.logical_and(dist < 1, relative_depth_diff < 0.01)
-    depth_reprojected[~mask] = 0
-
-    return mask, depth_reprojected, x2d_src, y2d_src
+        src_depths, src_cams = [], []
+        for ids in id_srcs:
+            src_intrinsics, src_extrinsics = read_camera_parameters(
+                os.path.join(self.scan_folder, 'cams/{:0>8}_cam.txt'.format(ids)))
+            src_proj = np.zeros((2, 4, 4), dtype=np.float32)
+            src_proj[0] = src_extrinsics
+            src_proj[1, :3, :3] = src_intrinsics
+            src_proj[1, 3, 3] = 1.0
+            src_cams.append(src_proj)
+            # the estimated depth of the source view
+            src_depth_est = read_pfm(os.path.join(self.scan_folder, 'depth_est/{:0>8}.pfm'.format(ids)))[0]
+            src_depths.append(np.array(src_depth_est, dtype=np.float32))
+        src_depths = np.expand_dims(np.stack(src_depths, axis=0), axis=1)
+        src_cams = np.stack(src_cams, axis=0)
+        return {"ref_depth": np.expand_dims(ref_depth_est, axis=0),
+                "ref_cam": ref_cam,
+                "ref_conf": confidence, #np.expand_dims(confidence, axis=0),
+                "src_depths": src_depths,
+                "src_cams": src_cams,
+                "ref_img": ref_img,
+                "ref_id": id_ref}
 
 
 def filter_depth(pair_folder, scan_folder, out_folder, plyfilename):
-    # the pair file
-    pair_file = os.path.join(pair_folder, "pair.txt")
-    # for the final point cloud
-    vertexs = []
-    vertex_colors = []
+    tt_dataset = TTDataset(pair_folder, scan_folder, n_src_views=10)
+    sampler = SequentialSampler(tt_dataset)
+    tt_dataloader = DataLoader(tt_dataset, batch_size=1, shuffle=False, sampler=sampler, num_workers=2,
+                               pin_memory=True, drop_last=False)
+    views = {}
+    prob_threshold = args.conf
+    prob_threshold = [float(p) for p in prob_threshold.split(',')]
+    for batch_idx, sample_np in enumerate(tt_dataloader):
+        sample = tocuda(sample_np)
+        #if sample_np.get('skip') is not None and np.any(sample_np['skip']): continue
+        #sample = {attr: torch.from_numpy(sample_np[attr]).float().cuda() for attr in sample_np if
+        #          attr not in ['skip', 'id']}
 
-    pair_data = read_pair_file(pair_file)
-    nviews = len(pair_data)
+        prob_mask = fusion.prob_filter(sample['ref_conf'], prob_threshold)
 
-    # for each reference view and the corresponding source views
-    for ref_view, src_views in pair_data:
-        # src_views = src_views[:args.num_view]
-        # load the camera parameters
-        ref_intrinsics, ref_extrinsics = read_camera_parameters(
-            os.path.join(scan_folder, 'cams/{:0>8}_cam.txt'.format(ref_view)))
-        # load the reference image
-        ref_img = read_img(os.path.join(scan_folder, 'images/{:0>8}.jpg'.format(ref_view)))
-        # load the estimated depth of the reference view
-        ref_depth_est = read_pfm(os.path.join(out_folder, 'depth_est/{:0>8}.pfm'.format(ref_view)))[0]
-        # load the photometric mask of the reference view
-        confidence = read_pfm(os.path.join(out_folder, 'confidence/{:0>8}.pfm'.format(ref_view)))[0]
-        photo_mask = confidence > args.conf
+        reproj_xyd, in_range = fusion.get_reproj(
+            *[sample[attr] for attr in ['ref_depth', 'src_depths', 'ref_cam', 'src_cams']])
+        vis_masks, vis_mask = fusion.vis_filter(sample['ref_depth'], reproj_xyd, in_range, args.thres_disp, 0.01, args.thres_view)
 
-        all_srcview_depth_ests = []
-        all_srcview_x = []
-        all_srcview_y = []
-        all_srcview_geomask = []
+        ref_depth_ave = fusion.ave_fusion(sample['ref_depth'], reproj_xyd, vis_masks)
 
-        # compute the geometric mask
-        geo_mask_sum = 0
-        for src_view in src_views:
-            # camera parameters of the source view
-            src_intrinsics, src_extrinsics = read_camera_parameters(
-                os.path.join(scan_folder, 'cams/{:0>8}_cam.txt'.format(src_view)))
-            # the estimated depth of the source view
-            src_depth_est = read_pfm(os.path.join(out_folder, 'depth_est/{:0>8}.pfm'.format(src_view)))[0]
+        mask = fusion.bin_op_reduce([prob_mask, vis_mask], torch.min)
 
-            geo_mask, depth_reprojected, x2d_src, y2d_src = check_geometric_consistency(ref_depth_est, ref_intrinsics, ref_extrinsics,
-                                                                      src_depth_est,
-                                                                      src_intrinsics, src_extrinsics)
-            geo_mask_sum += geo_mask.astype(np.int32)
-            all_srcview_depth_ests.append(depth_reprojected)
-            all_srcview_x.append(x2d_src)
-            all_srcview_y.append(y2d_src)
-            all_srcview_geomask.append(geo_mask)
+        idx_img = fusion.get_pixel_grids(*ref_depth_ave.size()[-2:]).unsqueeze(0)
+        idx_cam = fusion.idx_img2cam(idx_img, ref_depth_ave, sample['ref_cam'])
+        points = fusion.idx_cam2world(idx_cam, sample['ref_cam'])[..., :3, 0].permute(0, 3, 1, 2)
+        points_np = points.cpu().data.numpy()
+        mask_np = mask.cpu().data.numpy().astype(np.bool)
+        ref_img = sample_np['ref_img'].data.numpy()
+        for i in range(points_np.shape[0]):
+            print(np.sum(np.isnan(points_np[i])))
+            p_f_list = [points_np[i, k][mask_np[i, 0]] for k in range(3)]
+            p_f = np.stack(p_f_list, -1)
+            c_f_list = [ref_img[i, k][mask_np[i, 0]] for k in range(3)]
+            c_f = np.stack(c_f_list, -1) * 255
+            ref_id = str(sample_np['ref_id'][i].item())
+            views[ref_id] = (p_f, c_f.astype(np.uint8))
+            print("processing {}, ref-view{:0>2}, photo/geo/final-mask:{}/{}/{}".format(scan_folder, int(ref_id), prob_mask[i].float().mean().item(), vis_mask[i].float().mean().item(), mask[i].float().mean().item()))
 
-        depth_est_averaged = (sum(all_srcview_depth_ests) + ref_depth_est) / (geo_mask_sum + 1)
-        # at least 3 source views matched
-        geo_mask = geo_mask_sum >= args.thres_view
-        final_mask = np.logical_and(photo_mask, geo_mask)
+    print('Write combined PCD')
+    p_all, c_all = [np.concatenate([v[k] for key, v in views.items()], axis=0) for k in range(2)]
 
-        os.makedirs(os.path.join(out_folder, "mask"), exist_ok=True)
-        save_mask(os.path.join(out_folder, "mask/{:0>8}_photo.png".format(ref_view)), photo_mask)
-        save_mask(os.path.join(out_folder, "mask/{:0>8}_geo.png".format(ref_view)), geo_mask)
-        save_mask(os.path.join(out_folder, "mask/{:0>8}_final.png".format(ref_view)), final_mask)
-
-        print("processing {}, ref-view{:0>2}, photo/geo/final-mask:{}/{}/{}".format(scan_folder, ref_view,
-                                                                                    photo_mask.mean(),
-                                                                                    geo_mask.mean(), final_mask.mean()))
-
-        if args.display:
-            import cv2
-            cv2.imshow('ref_img', ref_img[:, :, ::-1])
-            cv2.imshow('ref_depth', ref_depth_est / 800)
-            cv2.imshow('ref_depth * photo_mask', ref_depth_est * photo_mask.astype(np.float32) / 800)
-            cv2.imshow('ref_depth * geo_mask', ref_depth_est * geo_mask.astype(np.float32) / 800)
-            cv2.imshow('ref_depth * mask', ref_depth_est * final_mask.astype(np.float32) / 800)
-            cv2.waitKey(0)
-
-        height, width = depth_est_averaged.shape[:2]
-        x, y = np.meshgrid(np.arange(0, width), np.arange(0, height))
-        # valid_points = np.logical_and(final_mask, ~used_mask[ref_view])
-        valid_points = final_mask
-        print("valid_points", valid_points.mean())
-        x, y, depth = x[valid_points], y[valid_points], depth_est_averaged[valid_points]
-        #color = ref_img[1:-16:4, 1::4, :][valid_points]  # hardcoded for DTU dataset
-
-        if num_stage == 1:
-            color = ref_img[1::4, 1::4, :][valid_points]
-        elif num_stage == 2:
-            color = ref_img[1::2, 1::2, :][valid_points]
-        elif num_stage == 3:
-            color = ref_img[valid_points]
-
-        xyz_ref = np.matmul(np.linalg.inv(ref_intrinsics),
-                            np.vstack((x, y, np.ones_like(x))) * depth)
-        xyz_world = np.matmul(np.linalg.inv(ref_extrinsics),
-                              np.vstack((xyz_ref, np.ones_like(x))))[:3]
-        vertexs.append(xyz_world.transpose((1, 0)))
-        vertex_colors.append((color * 255).astype(np.uint8))
-
-        # # set used_mask[ref_view]
-        # used_mask[ref_view][...] = True
-        # for idx, src_view in enumerate(src_views):
-        #     src_mask = np.logical_and(final_mask, all_srcview_geomask[idx])
-        #     src_y = all_srcview_y[idx].astype(np.int)
-        #     src_x = all_srcview_x[idx].astype(np.int)
-        #     used_mask[src_view][src_y[src_mask], src_x[src_mask]] = True
-
-    vertexs = np.concatenate(vertexs, axis=0)
-    vertex_colors = np.concatenate(vertex_colors, axis=0)
-    vertexs = np.array([tuple(v) for v in vertexs], dtype=[('x', 'f4'), ('y', 'f4'), ('z', 'f4')])
-    vertex_colors = np.array([tuple(v) for v in vertex_colors], dtype=[('red', 'u1'), ('green', 'u1'), ('blue', 'u1')])
+    vertexs, vertex_colors = [], []
+    for i in range(len(p_all)):
+        if np.sum(np.isnan(p_all[i])) == 0:
+            vertexs.append(tuple(p_all[i]))
+            vertex_colors.append(tuple(c_all[i]))
+    vertexs = np.array(vertexs, dtype=[('x', 'f4'), ('y', 'f4'), ('z', 'f4')])
+    vertex_colors = np.array(vertex_colors, dtype=[('red', 'u1'), ('green', 'u1'), ('blue', 'u1')])
+    #vertexs = np.array([tuple(v) for v in p_all], dtype=[('x', 'f4'), ('y', 'f4'), ('z', 'f4')])
+    #vertex_colors = np.array([tuple(v) for v in c_all], dtype=[('red', 'u1'), ('green', 'u1'), ('blue', 'u1')])
 
     vertex_all = np.empty(len(vertexs), vertexs.dtype.descr + vertex_colors.dtype.descr)
     for prop in vertexs.dtype.names:
@@ -460,8 +410,10 @@ def pcd_filter_worker(scan):
 
 
 def pcd_filter(testlist, number_worker):
+    for scan in testlist:
+        pcd_filter_worker(scan)
 
-    partial_func = partial(pcd_filter_worker)
+    """partial_func = partial(pcd_filter_worker)
 
     p = Pool(number_worker, init_worker)
     try:
@@ -471,7 +423,7 @@ def pcd_filter(testlist, number_worker):
         p.terminate()
     else:
         p.close()
-    p.join()
+    p.join()"""
 
 
 if __name__ == '__main__':
@@ -487,13 +439,15 @@ if __name__ == '__main__':
             if not args.testpath_single_scene else [os.path.basename(args.testpath_single_scene)]
 
     # step1. save all the depth maps and the masks in outputs directory
-    save_depth(testlist, config)
+    # save_depth(testlist, config)
 
     # step2. filter saved depth maps with photometric confidence maps and geometric constraints
 
-    #if args.filter_method != "gipuma":
+    if args.filter_method != "gipuma":
     #     #support multi-processing, the default number of worker is 4
-    #    pcd_filter(testlist, args.num_worker)
-    #else:
-    #    gipuma_filter(testlist, args.outdir, args.prob_threshold, args.disp_threshold, args.num_consistent,
-    #                  args.fusibile_exe_path)
+        pcd_filter(testlist, args.num_worker)
+    else:
+        prob_threshold = args.prob_threshold
+        prob_threshold = [float(p) for p in prob_threshold.split(',')]
+        gipuma_filter(testlist, args.outdir, prob_threshold, args.disp_threshold, args.num_consistent,
+                      args.fusibile_exe_path)
