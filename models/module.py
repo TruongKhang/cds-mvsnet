@@ -63,7 +63,7 @@ class Conv2d(nn.Module):
         self.dynamic = dynamic
         self.kernel_size = kernel_size
         self.stride = stride
-        self.bn = nn.BatchNorm2d(out_channels, momentum=bn_momentum) if bn else None
+        self.bn = nn.InstanceNorm2d(out_channels, momentum=bn_momentum) if bn else None
         self.relu = relu
 
         # assert init_method in ["kaiming", "xavier"]
@@ -275,16 +275,16 @@ class FeatureNet(nn.Module):
         )
 
         self.out1 = DynamicConv(base_channels*4, base_channels*4, size_kernels=(1, 3))
-        self.act1 = nn.Sequential(nn.BatchNorm2d(base_channels*4), nn.Tanh())
+        self.act1 = nn.Sequential(nn.InstanceNorm2d(base_channels*4), nn.Tanh())
         self.out_channels = [base_channels*4]
 
         self.inner1 = Conv2d(base_channels * 6, base_channels * 2, 1) #nn.Sequential(nn.Conv2d(base_channels * 6, base_channels*2, 1, bias=True), nn.ReLU(inplace=True))
         self.inner2 = Conv2d(base_channels * 3, base_channels, 1) #nn.Sequential(nn.Conv2d(base_channels * 3, base_channels, 1, bias=True), nn.ReLU(inplace=True))
 
-        self.out2 = DynamicConv(base_channels*2, base_channels*2, size_kernels=(3, 5))  # nn.Conv2d(final_chs, base_channels * 2, 3, padding=1, bias=False)
-        self.act2 = nn.Sequential(nn.BatchNorm2d(base_channels*2), nn.Tanh())
-        self.out3 = DynamicConv(base_channels, base_channels, size_kernels=(3, 5))  # nn.Conv2d(final_chs, base_channels, 3, padding=1, bias=False)
-        self.act3 = nn.Sequential(nn.BatchNorm2d(base_channels), nn.Tanh())
+        self.out2 = DynamicConv(base_channels*2, base_channels*2, size_kernels=(1, 3))  # nn.Conv2d(final_chs, base_channels * 2, 3, padding=1, bias=False)
+        self.act2 = nn.Sequential(nn.InstanceNorm2d(base_channels*2), nn.Tanh())
+        self.out3 = DynamicConv(base_channels, base_channels, size_kernels=(1, 3))  # nn.Conv2d(final_chs, base_channels, 3, padding=1, bias=False)
+        self.act3 = nn.Sequential(nn.InstanceNorm2d(base_channels), nn.Tanh())
         self.out_channels.append(base_channels*2)
         self.out_channels.append(base_channels)
 
