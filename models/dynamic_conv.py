@@ -84,7 +84,7 @@ class DynamicConv(nn.Module):
         super(DynamicConv, self).__init__()
         self.size_kernels = size_kernels
         self.thresh_scale = thresh_scale
-        self.att_convs = nn.ModuleList([nn.Conv2d(1, 3, k, padding=(k-1)//2, bias=False) for k in size_kernels])
+        self.att_convs = nn.ModuleList([nn.Conv2d(in_c, 3, k, padding=(k-1)//2, bias=False) for k in size_kernels])
         self.convs = nn.ModuleList([nn.Conv2d(in_c, out_c, k, padding=(k-1)//2, stride=stride, bias=bias) for k in self.size_kernels])
         hidden_dim = kwargs.get("hidden_dim", 4)
         self.att_weights = nn.Sequential(nn.Conv2d(len(size_kernels), hidden_dim, 1, bias=False),
@@ -103,7 +103,7 @@ class DynamicConv(nn.Module):
             torch.nn.init.normal_(p, std=0.1)
 
     def forward(self, feature_vol, epipole=None):
-        surface = feature_vol.mean(dim=1, keepdim=True)
+        # surface = feature_vol.mean(dim=1, keepdim=True)
         batch_size, height, width = feature_vol.shape[0], feature_vol.shape[2], feature_vol.shape[3]
         y, x = torch.meshgrid([torch.arange(0, height, dtype=torch.float32, device=feature_vol.device),
                                torch.arange(0, width, dtype=torch.float32, device=feature_vol.device)])
@@ -120,7 +120,7 @@ class DynamicConv(nn.Module):
         weights = []
         results = []
         for idx, s in enumerate(self.size_kernels):
-            curv = self.att_convs[idx](surface)
+            curv = self.att_convs[idx](feature_vol)
             curv = (curv * torch.cat((u**2, 2*u*v, v**2), dim=1)).sum(dim=1, keepdim=True)
             # w = self.att_weights[idx](feature_vol)
             weights.append(curv) #.unsqueeze(1))
