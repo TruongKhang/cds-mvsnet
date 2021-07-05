@@ -1,0 +1,5 @@
+lakeside
+sand_box
+storage_room
+storage_room_2
+tunnel

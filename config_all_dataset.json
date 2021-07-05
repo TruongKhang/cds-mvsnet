@@ -1,6 +1,6 @@
 {
     "name": "TAMVS",
-    "n_gpu": 2,
+    "n_gpu": 1,
 
     "arch": {
         "type": "TAMVSNet",
@@ -21,7 +21,7 @@
           "train_data_list": "lists/dtu/train.txt",
           "val_data_list": "lists/dtu/val.txt",
           "mode": "train",
-          "num_srcs": 3,
+          "num_srcs": 4,
           "num_depths": 192,
           "interval_scale": 1.06,
           "shuffle": true,
@@ -36,7 +36,7 @@
           "train_data_list": "lists/blended/training_list.txt",
           "val_data_list": "lists/blended/validation_list.txt",
           "mode": "train",
-          "num_srcs": 3,
+          "num_srcs": 4,
           "num_depths": 192,
           "interval_scale": 1.0,
           "shuffle": true,
@@ -48,8 +48,8 @@
     "optimizer": {
         "type": "SGD",
         "args":{
-            "lr": 0.001,
-            "weight_decay": 0
+            "lr": 0.0001,
+            "weight_decay": 0.01
         }
     },
     "loss": "final_loss",
@@ -64,7 +64,7 @@
         }
     },
     "trainer": {
-        "epochs": 30,
+        "epochs": 20,
         "seq": true,
         "save_dir": "saved/",
         "save_period": 1,

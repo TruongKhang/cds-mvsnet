@@ -125,7 +125,11 @@ class BlendedMVSDataset(Dataset):
         meta = self.metas[idx]
         scan, ref_view, src_views, scene_name = meta
         # use only the reference view and first nviews-1 source views
-        view_ids = [ref_view] + src_views #[:self.nviews - 1]
+        if self.mode == 'train':
+            src_views = src_views[:7]
+            np.random.shuffle(src_views)
+        view_ids = [ref_view] + src_views[:(self.nviews-1)]
+        # view_ids = [ref_view] + src_views #[:self.nviews - 1]
 
         imgs = []
         depth_values = None

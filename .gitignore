@@ -133,3 +133,5 @@ saved/
 fusibile
 pretrains
 tt_outputs
+*outputs*
+move.py

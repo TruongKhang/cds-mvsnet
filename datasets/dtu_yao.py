@@ -136,8 +136,11 @@ class DTUMVSDataset(Dataset):
     def __getitem__(self, idx):
         meta = self.metas[idx]
         scan, light_idx, ref_view, src_views = meta
-
-        view_ids = [ref_view] + src_views
+        if self.mode == 'train':
+            src_views = src_views[:7]
+            np.random.shuffle(src_views)
+        view_ids = [ref_view] + src_views[:(self.nviews-1)]
+        # view_ids = [ref_view] + src_views
 
         imgs = []
         mask = None
