@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from models.module import depth_regression, conf_regression, FeatureNet, CostRegNet, RefineNet, get_depth_range_samples
+from models.module import depth_regression, conf_regression, FeatureNet, CostRegNet, Refinement, get_depth_range_samples
 from models.utils.warping import homo_warping_3D
 from models.dynamic_conv import compute_Fmatrix, compute_epipole
 
@@ -15,7 +15,7 @@ class StageNet(nn.Module):
         # self.cos_sim = nn.CosineSimilarity(dim=1)
 
     def forward(self, features, proj_matrices, depth_values, num_depth, cost_regularization, prob_volume_init=None,
-                gt_depth=None, gt_mask=None):
+                feat_depth_samples=None):
         proj_matrices = torch.unbind(proj_matrices, 1)
         assert len(features) == len(proj_matrices)-1, "Different number of images and projection matrices"
         assert depth_values.shape[1] == num_depth, "depth_values.shape[1]:{}  num_depth:{}".format(depth_values.shapep[1], num_depth)
@@ -54,9 +54,9 @@ class StageNet(nn.Module):
             volume_sum = volume_sum + (ref_volume * warped_volume) #(ref_volume - warped_volume)**2
             # volume_sum = volume_sum + self.cos_sim(ref_volume, warped_volume) # [B, D, H, W]
 
-            if gt_depth is not None:
-                gt_warped_vol = homo_warping_3D(src_fea, src_proj_new, ref_proj_new, gt_depth.unsqueeze(1).unsqueeze(1))
-                feat_distance_vol = feat_distance_vol + torch.sum((ref_fea - gt_warped_vol.squeeze(2))**2, dim=1) #self.cos_sim(ref_fea.unsqueeze(2), gt_warped_vol)
+            if feat_depth_samples is not None:
+                warped_vol = homo_warping_3D(src_fea, src_proj_new, ref_proj_new, feat_depth_samples)
+                feat_distance_vol = feat_distance_vol + torch.sum(ref_fea.unsqueeze(2) * warped_vol, dim=1)
 
             # if self.training:
             #     volume_sum = volume_sum + warped_volume
@@ -84,7 +84,7 @@ class StageNet(nn.Module):
         depth = depth_regression(prob_volume, depth_values=depth_values)
         photometric_confidence = conf_regression(prob_volume)
 
-        return {"depth": depth,  "photometric_confidence": photometric_confidence, "feat_distance": feat_distance_vol} if gt_depth is not None else {"depth": depth,  "photometric_confidence": photometric_confidence}
+        return {"depth": depth,  "photometric_confidence": photometric_confidence, "feat_distance": feat_distance_vol} if feat_depth_samples is not None else {"depth": depth,  "photometric_confidence": photometric_confidence}
 
 
 class TAMVSNet(nn.Module):
@@ -125,13 +125,15 @@ class TAMVSNet(nn.Module):
                                                                  base_channels=self.cr_base_chs[i])
                                                       for i in range(self.num_stage)])
         if self.refine:
-            self.refine_network = RefineNet()
+            self.refine_network = Refinement()
 
     def forward(self, imgs, proj_matrices, depth_values, gt_depths=None):
         depth_min = depth_values[:, [0]].unsqueeze(-1).unsqueeze(-1) #float(depth_values[0, 0].cpu().numpy())
         depth_max = depth_values[:, [-1]].unsqueeze(-1).unsqueeze(-1) #float(depth_values[0, -1].cpu().numpy())
         depth_interval = (depth_values[:, 1] - depth_values[:, 0]).unsqueeze(-1).unsqueeze(-1) #(depth_max - depth_min) / depth_values.size(1)
 
+        batch_size, nviews, height, width = imgs.shape[0], imgs.shape[1], imgs.shape[3], imgs.shape[4]
+        height, width = height // 2, width // 2
         # step 1. feature extraction
         features = []
         list_imgs = torch.unbind(imgs, dim=1)
@@ -143,16 +145,9 @@ class TAMVSNet(nn.Module):
             fundamental_matrix = compute_Fmatrix(ref_proj, src_proj)
             ref_epipole = compute_epipole(fundamental_matrix)
             src_epipole = compute_epipole(torch.transpose(fundamental_matrix, 1, 2))
-            ref_feat = self.feature(ref_img, epipole=ref_epipole)
-            src_feat = self.feature(src_img, epipole=src_epipole)
+            ref_feat = self.feature(F.interpolate(ref_img, (height, width)), epipole=ref_epipole)
+            src_feat = self.feature(F.interpolate(src_img, (height, width)), epipole=src_epipole)
             features.append({"ref": ref_feat, "src": src_feat})
-
-        # for nview_idx in range(imgs.size(1)):  # imgs shape (B, N, C, H, W)
-        #     img = imgs[:, nview_idx]
-        #     features.append(self.feature(img))
-
-        batch_size, nviews, height, width = imgs.shape[0], imgs.shape[1], imgs.shape[3], imgs.shape[4]
-        # imgs = torch.unbind(dim=1)
 
         outputs = {}
         depth, cur_depth = None, None
@@ -164,7 +159,21 @@ class TAMVSNet(nn.Module):
             # features_stage = [feat[stage_name] for feat in features]
             proj_matrices_stage = proj_matrices["stage{}".format(stage_idx + 1)]
             stage_scale = self.stage_infos["stage{}".format(stage_idx + 1)]["scale"]
-            gt_depth_stage = gt_depths[stage_name] if gt_depths is not None else None
+            gt_depth_stage = gt_depths[stage_name].unsqueeze(1) if gt_depths is not None else None
+            di_stage = depth_interval.unsqueeze(1) * stage_scale
+            if gt_depths is not None:
+                dl = (gt_depth_stage - depth_min).abs()
+                dr = (gt_depth_stage - depth_max).abs()
+                nl_samples = dl / (dl + dr) * self.ndepths[stage_idx]
+                nl_samples = nl_samples.int().float()
+                # nr_samples = self.ndepths[stage_idx] - nl_samples
+                cur_depth_min = gt_depth_stage - di_stage * nl_samples
+                # cur_depth_max = cur_depth + di_stage * nr_samples
+                feat_depth_samples = cur_depth_min + torch.arange(self.ndepths[stage_idx] + 1,
+                                                             device=gt_depth_stage.device).unsqueeze(0).unsqueeze(
+                    -1).unsqueeze(-1) * di_stage
+            else:
+                feat_depth_samples = None
 
             if depth is not None:
                 if self.grad_method == "detach":
@@ -187,17 +196,22 @@ class TAMVSNet(nn.Module):
                                                                       align_corners=Align_Corners_Range).squeeze(1),
                                            num_depth=self.ndepths[stage_idx],
                                            cost_regularization=self.cost_regularization if self.share_cr else self.cost_regularization[stage_idx],
-                                           gt_depth=gt_depth_stage)
+                                           feat_depth_samples=feat_depth_samples)
 
             depth = outputs_stage['depth']
+
+            if gt_depths is not None:
+                target = (feat_depth_samples - gt_depth_stage).abs() / di_stage
+                target = (target < 0.5).float()
+                outputs_stage.update({"feat_target": target})
 
             outputs["stage{}".format(stage_idx + 1)] = outputs_stage
             outputs.update(outputs_stage)
 
         # depth map refinement
         if self.refine:
-            refined_depth = self.refine_network(torch.cat((imgs[:, 0], depth), 1))
-            outputs["refined_depth"] = refined_depth
+            refined_depth = self.refine_network(ref_img, depth.unsqueeze(1), depth_values[:, 0], depth_values[:, -1])
+            outputs["refined_depth"] = refined_depth.squeeze(1)
 
         return outputs
 

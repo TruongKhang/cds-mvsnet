@@ -226,25 +226,36 @@ class Deconv3d(nn.Module):
             init_bn(self.bn)
 
 
-class DeConv2dFuse(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size, relu=True, bn=True,
-                 bn_momentum=0.1):
-        super(DeConv2dFuse, self).__init__()
+class ConvBnReLU(nn.Module):
+    """Implements 2d Convolution + batch normalization + ReLU"""
 
-        self.deconv = Deconv2d(in_channels, out_channels, kernel_size, stride=2, padding=1, output_padding=1,
-                               bn=True, relu=relu, bn_momentum=bn_momentum)
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        kernel_size: int = 3,
+        stride: int = 1,
+        pad: int = 1,
+        dilation: int = 1,
+    ) -> None:
+        """initialization method for convolution2D + batch normalization + relu module
+        Args:
+            in_channels: input channel number of convolution layer
+            out_channels: output channel number of convolution layer
+            kernel_size: kernel size of convolution layer
+            stride: stride of convolution layer
+            pad: pad of convolution layer
+            dilation: dilation of convolution layer
+        """
+        super(ConvBnReLU, self).__init__()
+        self.conv = nn.Conv2d(
+            in_channels, out_channels, kernel_size, stride=stride, padding=pad, dilation=dilation, bias=False
+        )
+        self.bn = nn.BatchNorm2d(out_channels)
 
-        self.conv = Conv2d(2*out_channels, out_channels, kernel_size, stride=1, padding=1,
-                           bn=bn, relu=relu, bn_momentum=bn_momentum, dynamic=False)
-
-        # assert init_method in ["kaiming", "xavier"]
-        # self.init_weights(init_method)
-
-    def forward(self, x_pre, x):
-        x = self.deconv(x)
-        x = torch.cat((x, x_pre), dim=1)
-        x = self.conv(x)
-        return x
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """forward method"""
+        return F.relu(self.bn(self.conv(x)), inplace=True)
 
 
 class FeatureNet(nn.Module):
@@ -258,8 +269,8 @@ class FeatureNet(nn.Module):
         self.num_stage = num_stage
 
         self.conv0 = nn.Sequential(
-            Conv2d(3, base_channels, (3, 7), 1, dynamic=True),
-            Conv2d(base_channels, base_channels, (3, 5), 1, dynamic=True),
+            Conv2d(3, base_channels, (3, 7, 11), 1, dynamic=True),
+            Conv2d(base_channels, base_channels, (3, 5, 7), 1, dynamic=True),
         )
 
         self.downsample1 = Conv2d(base_channels, base_channels*2, 3, stride=2, padding=1)
@@ -388,37 +399,62 @@ class CostRegNet(nn.Module):
         return x
 
 
-class RefineNet(nn.Module):
-    def __init__(self, in_c):
-        super(RefineNet, self).__init__()
-        self.feature_extractor = nn.Sequential(Conv2d(in_c, 64, 3, bn=False, padding=1), #UNet(3, 32, 32, 3, batchnorms=False)
-                                               Conv2d(64, 32, 3, bn=False, padding=1),
-                                               Conv2d(32, 32, 3, bn=False, padding=1),
-                                               #Conv2d(32, 32, 3, bn=False, padding=1),
-                                               Conv2d(32, 32, 3, bn=False, padding=1))
-        self.depth_prediction = nn.Sequential(Conv2d(32, 32, 3, bn=False, padding=1),
-                                              Conv2d(32, 32, 3, bn=False, padding=1),
-                                              #Conv2d(32, 32, 3, bn=False, padding=1),
-                                              nn.Conv2d(32, 1, 1))
-        self.conf_prediction = nn.Sequential(Conv2d(33, 64, 3, bn=False, padding=1),
-                                             Conv2d(64, 32, 3, bn=False, padding=1),
-                                             #Conv2d(32, 32, 3, bn=False, padding=1),
-                                             nn.Conv2d(32, 1, 1),
-                                             nn.Softplus())
+class Refinement(nn.Module):
+    """Depth map refinement network"""
 
-    def forward(self, init_depth, stage_idx, prior, feat_img=None):
-        prior_depth, prior_conf = prior
-        inputs = torch.cat((feat_img, prior_depth, init_depth, prior_depth - init_depth, prior_conf), dim=1)
-        latent_feat = self.feature_extractor(inputs)
+    def __init__(self):
+        """Initialize"""
 
-        depth_residual = self.depth_prediction(latent_feat)
-        final_depth = init_depth + depth_residual
-        final_conf = None
-        if stage_idx == 2:
-            input_feat = torch.cat((latent_feat, depth_residual), dim=1).detach()
-            final_conf = self.conf_prediction(input_feat)
-            final_conf = final_conf.squeeze(1)
-        return final_depth.squeeze(1), final_conf
+        super(Refinement, self).__init__()
+
+        # img: [B,3,H,W]
+        self.conv0 = ConvBnReLU(in_channels=3, out_channels=8)
+        # depth map:[B,1,H/2,W/2]
+        self.conv1 = ConvBnReLU(in_channels=1, out_channels=8)
+        self.conv2 = ConvBnReLU(in_channels=8, out_channels=8)
+        self.deconv = nn.ConvTranspose2d(
+            in_channels=8, out_channels=8, kernel_size=3, padding=1, output_padding=1, stride=2, bias=False
+        )
+
+        self.bn = nn.BatchNorm2d(8)
+        self.conv3 = ConvBnReLU(in_channels=16, out_channels=8)
+        self.res = nn.Conv2d(in_channels=8, out_channels=1, kernel_size=3, padding=1, bias=False)
+
+    def forward(
+        self, img: torch.Tensor, depth_0: torch.Tensor, depth_min: torch.Tensor, depth_max: torch.Tensor
+    ) -> torch.Tensor:
+        """Forward method
+        Args:
+            img: input reference images (B, 3, H, W)
+            depth_0: current depth map (B, 1, H//2, W//2)
+            depth_min: pre-defined minimum depth (B, )
+            depth_max: pre-defined maximum depth (B, )
+        Returns:
+            depth: refined depth map (B, 1, H, W)
+        """
+
+        batch_size = depth_min.size()[0]
+        # pre-scale the depth map into [0,1]
+        depth = (depth_0 - depth_min.view(batch_size, 1, 1, 1)) / (
+            depth_max.view(batch_size, 1, 1, 1) - depth_min.view(batch_size, 1, 1, 1)
+        )
+
+        conv0 = self.conv0(img)
+        deconv = F.relu(self.bn(self.deconv(self.conv2(self.conv1(depth)))), inplace=True)
+        cat = torch.cat((deconv, conv0), dim=1)
+        del deconv, conv0
+        # depth residual
+        res = self.res(self.conv3(cat))
+        del cat
+
+        depth = F.interpolate(depth, scale_factor=2, mode="nearest") + res
+        # convert the normalized depth back
+        depth = depth * (depth_max.view(batch_size, 1, 1, 1) - depth_min.view(batch_size, 1, 1, 1)) + depth_min.view(
+            batch_size, 1, 1, 1
+        )
+
+        return depth
+
 
 
 def depth_regression(p, depth_values):

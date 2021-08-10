@@ -109,9 +109,10 @@ class DTUMVSDataset(Dataset):
 
         h, w = np_img.shape
         np_img_ms = {
-            "stage1": cv2.resize(np_img, (w//4, h//4), interpolation=cv2.INTER_NEAREST),
-            "stage2": cv2.resize(np_img, (w//2, h//2), interpolation=cv2.INTER_NEAREST),
-            "stage3": np_img,
+            "stage1": cv2.resize(np_img, (w//8, h//8), interpolation=cv2.INTER_NEAREST),
+            "stage2": cv2.resize(np_img, (w//4, h//4), interpolation=cv2.INTER_NEAREST),
+            "stage3": cv2.resize(np_img, (w//2, h//2), interpolation=cv2.INTER_NEAREST),
+            "stage4": np_img,
         }
         return np_img_ms
 
@@ -127,9 +128,10 @@ class DTUMVSDataset(Dataset):
 
         h, w = depth_lr.shape
         depth_lr_ms = {
-            "stage1": cv2.resize(depth_lr, (w//4, h//4), interpolation=cv2.INTER_NEAREST),
-            "stage2": cv2.resize(depth_lr, (w//2, h//2), interpolation=cv2.INTER_NEAREST),
-            "stage3": depth_lr,
+            "stage1": cv2.resize(depth_lr, (w//8, h//8), interpolation=cv2.INTER_NEAREST),
+            "stage2": cv2.resize(depth_lr, (w//4, h//4), interpolation=cv2.INTER_NEAREST),
+            "stage3": cv2.resize(depth_lr, (w//2, h//2), interpolation=cv2.INTER_NEAREST),
+            "stage4": depth_lr,
         }
         return depth_lr_ms
 
@@ -188,10 +190,14 @@ class DTUMVSDataset(Dataset):
         stage3_pjmats = proj_matrices.copy()
         stage3_pjmats[:, 1, :2, :] = proj_matrices[:, 1, :2, :] * 4
 
+        stage0_pjmats = proj_matrices.copy()
+        stage0_pjmats[:, 1, :2, :] = proj_matrices[:, 1, :2, :] * 0.5
+
         proj_matrices_ms = {
-            "stage1": proj_matrices,
-            "stage2": stage2_pjmats,
-            "stage3": stage3_pjmats
+            "stage1": stage0_pjmats,
+            "stage2": proj_matrices,
+            "stage3": stage2_pjmats,
+            "stage4": stage3_pjmats
         }
 
         return {"imgs": imgs,

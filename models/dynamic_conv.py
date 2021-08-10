@@ -88,7 +88,7 @@ class DynamicConv(nn.Module):
         self.convs = nn.ModuleList([nn.Conv2d(in_c, out_c, k, padding=(k-1)//2, stride=stride, bias=bias) for k in self.size_kernels])
         hidden_dim = kwargs.get("hidden_dim", 4)
         self.att_weights = nn.Sequential(nn.Conv2d(len(size_kernels), hidden_dim, 1, bias=False),
-                                         nn.InstanceNorm2d(hidden_dim),
+                                         nn.BatchNorm2d(hidden_dim),
                                          nn.ReLU(inplace=True),
                                          nn.Conv2d(hidden_dim, len(size_kernels), 1, bias=False))
         # att_weights = []

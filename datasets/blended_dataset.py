@@ -60,8 +60,8 @@ class BlendedMVSDataset(Dataset):
         extrinsics = np.fromstring(' '.join(lines[1:5]), dtype=np.float32, sep=' ').reshape((4, 4))
         # intrinsics: line [7-10), 3x3 matrix
         intrinsics = np.fromstring(' '.join(lines[7:10]), dtype=np.float32, sep=' ').reshape((3, 3))
-        intrinsics[0, 2] -= 64.0
-        intrinsics[1, 2] -= 32.0
+        #intrinsics[0, 2] -= 64.0
+        #intrinsics[1, 2] -= 32.0
         intrinsics[:2, :] /= 4.0
         # depth_min & depth_interval: line 11
         depth_min = float(lines[11].split()[0])
@@ -78,7 +78,7 @@ class BlendedMVSDataset(Dataset):
 
     def prepare_img(self, img):
         h, w = img.shape[:2]
-        target_h, target_w = 512, 640
+        target_h, target_w = 576, 768 #512, 640
         start_h, start_w = (h - target_h)//2, (w - target_w)//2
         img_crop = img[start_h: start_h + target_h, start_w: start_w + target_w]
         return img_crop
@@ -97,9 +97,10 @@ class BlendedMVSDataset(Dataset):
         depth = self.prepare_img(depth)
         h, w = depth.shape
         depth_ms = {
-            "stage1": cv2.resize(depth, (w // 4, h // 4), interpolation=cv2.INTER_NEAREST),
-            "stage2": cv2.resize(depth, (w // 2, h // 2), interpolation=cv2.INTER_NEAREST),
-            "stage3": depth,
+            "stage1": cv2.resize(depth, (w // 8, h // 8), interpolation=cv2.INTER_NEAREST),
+            "stage2": cv2.resize(depth, (w // 4, h // 4), interpolation=cv2.INTER_NEAREST),
+            "stage3": cv2.resize(depth, (w // 2, h // 2), interpolation=cv2.INTER_NEAREST),
+            "stage4": depth,
         }
 
         return depth_ms
@@ -113,9 +114,10 @@ class BlendedMVSDataset(Dataset):
         # np_img = cv2.resize(np_img, (768, 576), interpolation=cv2.INTER_NEAREST)
         h, w = np_img.shape
         np_img_ms = {
-            "stage1": cv2.resize(np_img, (w//4, h//4), interpolation=cv2.INTER_NEAREST),
-            "stage2": cv2.resize(np_img, (w//2, h//2), interpolation=cv2.INTER_NEAREST),
-            "stage3": np_img,
+            "stage1": cv2.resize(np_img, (w//8, h//8), interpolation=cv2.INTER_NEAREST),
+            "stage2": cv2.resize(np_img, (w//4, h//4), interpolation=cv2.INTER_NEAREST),
+            "stage3": cv2.resize(np_img, (w//2, h//2), interpolation=cv2.INTER_NEAREST),
+            "stage4": np_img,
         }
         return np_img_ms
 
@@ -170,10 +172,14 @@ class BlendedMVSDataset(Dataset):
         stage3_pjmats = proj_matrices.copy()
         stage3_pjmats[:, 1, :2, :] = proj_matrices[:, 1, :2, :] * 4
 
+        stage0_pjmats = proj_matrices.copy()
+        stage0_pjmats[:, 1, :2, :] = proj_matrices[:, 1, :2, :] * 0.5
+
         proj_matrices_ms = {
-            "stage1": proj_matrices,
-            "stage2": stage2_pjmats,
-            "stage3": stage3_pjmats
+            "stage1": stage0_pjmats,
+            "stage2": proj_matrices,
+            "stage3": stage2_pjmats,
+            "stage4": stage3_pjmats
         }
 
         return {"imgs": imgs,

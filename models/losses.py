@@ -22,14 +22,23 @@ def final_loss(inputs, depth_gt_ms, mask_ms, **kwargs):
         feat_loss = 0.0
         if "feat_distance" in stage_inputs:
             feat_dis = stage_inputs["feat_distance"]
-            target = torch.ones_like(depth_gt)
-            feat_loss = F.hinge_embedding_loss(feat_dis[mask], target[mask], reduction='mean')
-
+            target = stage_inputs["feat_target"]
+            ndepths = target.size(1)
+            mask = mask.unsqueeze(1).repeat(1, ndepths, 1, 1)
+            feat_loss = F.binary_cross_entropy_with_logits(feat_dis[mask], target[mask], reduction='mean',
+                                                           pos_weight=torch.zeros([1], device=target.device)+ndepths)
         if depth_loss_weights is not None:
             stage_idx = int(stage_key.replace("stage", "")) - 1
-            total_loss = total_loss + depth_loss_weights[stage_idx] * (depth_loss + feat_loss)
+            total_loss = total_loss + depth_loss_weights[stage_idx] * (depth_loss + 10 * feat_loss)
         else:
             total_loss += 1.0 * (depth_loss * 0.1 + feat_loss)
+
+    if "refined_depth" in inputs:
+        depth_gt = depth_gt_ms["stage4"] / depth_interval
+        depth_est = inputs["refined_depth"] / depth_interval
+        mask = mask_ms["stage4"] > 0.5
+        depth_loss = F.smooth_l1_loss(depth_est[mask], depth_gt[mask], reduction='mean')
+        total_loss = total_loss + depth_loss
 
     return total_loss, depth_loss
 
