@@ -87,8 +87,8 @@ class DynamicConv(nn.Module):
         self.att_convs = nn.ModuleList([nn.Conv2d(in_c, 3, k, padding=(k-1)//2, bias=False) for k in size_kernels])
         self.convs = nn.ModuleList([nn.Conv2d(in_c, out_c, k, padding=(k-1)//2, stride=stride, bias=bias) for k in self.size_kernels])
         hidden_dim = kwargs.get("hidden_dim", 4)
-        self.att_weights = nn.Sequential(nn.Conv2d(len(size_kernels), hidden_dim, 1, bias=False),
-                                         nn.BatchNorm2d(hidden_dim),
+        self.att_weights = nn.Sequential(nn.Conv2d(len(size_kernels), hidden_dim, 1),
+                                         # nn.InstanceNorm2d(hidden_dim),
                                          nn.ReLU(inplace=True),
                                          nn.Conv2d(hidden_dim, len(size_kernels), 1, bias=False))
         # att_weights = []
@@ -97,12 +97,12 @@ class DynamicConv(nn.Module):
         #                                      nn.ReLU(inplace=True),
         #                                      nn.Conv2d(hidden_dim, 1, 1, bias=True)))
         # self.att_weights = nn.ModuleList(att_weights)
-        self.temperature = kwargs.get("temperature", 0.01)
+        # self.temperature = kwargs.get("temperature", 0.001)
 
         for p in self.att_convs.parameters():
             torch.nn.init.normal_(p, std=0.1)
 
-    def forward(self, feature_vol, epipole=None):
+    def forward(self, feature_vol, epipole=None, temperature=0.001):
         # surface = feature_vol.mean(dim=1, keepdim=True)
         batch_size, height, width = feature_vol.shape[0], feature_vol.shape[2], feature_vol.shape[3]
         y, x = torch.meshgrid([torch.arange(0, height, dtype=torch.float32, device=feature_vol.device),
@@ -127,7 +127,7 @@ class DynamicConv(nn.Module):
             results.append(self.convs[idx](feature_vol).unsqueeze(1))
         weights = torch.cat(weights, dim=1) # [B, num_kernels, H, W]
         weights = self.att_weights(weights)
-        weights = F.softmax(weights / self.temperature, dim=1)
+        weights = F.softmax(weights / temperature, dim=1)
         filtered_result = (torch.cat(results, dim=1) * weights.unsqueeze(2)).sum(dim=1)
         return filtered_result #, sum_mask, t11, t12, t13
 

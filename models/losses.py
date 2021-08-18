@@ -31,14 +31,14 @@ def final_loss(inputs, depth_gt_ms, mask_ms, **kwargs):
             stage_idx = int(stage_key.replace("stage", "")) - 1
             total_loss = total_loss + depth_loss_weights[stage_idx] * (depth_loss + 10 * feat_loss)
         else:
-            total_loss += 1.0 * (depth_loss * 0.1 + feat_loss)
+            total_loss += 1.0 * (depth_loss+ 10 * feat_loss)
 
     if "refined_depth" in inputs:
         depth_gt = depth_gt_ms["stage4"] / depth_interval
         depth_est = inputs["refined_depth"] / depth_interval
         mask = mask_ms["stage4"] > 0.5
         depth_loss = F.smooth_l1_loss(depth_est[mask], depth_gt[mask], reduction='mean')
-        total_loss = total_loss + depth_loss
+        total_loss = total_loss + 2*depth_loss
 
     return total_loss, depth_loss
 

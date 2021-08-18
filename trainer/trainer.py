@@ -42,7 +42,12 @@ class Trainer(BaseTrainer):
         :return: A log that contains average loss and metric in this epoch.
         """
         self.model.train()
-        print('Epoch {}:'.format(epoch))
+        if epoch <= 5:
+            p = (epoch - 1) / 2.0
+            temperature = np.power(10.0, -p)
+        else:
+            temperature = 0.01
+        print('Epoch {} temperature {}'.format(epoch, temperature))
 
         # self.data_loader.dataset.generate_indices()
         outputs = None
@@ -70,7 +75,7 @@ class Trainer(BaseTrainer):
 
                 depth_values = sample_cuda["depth_values"]
                 depth_interval = depth_values[:, 1] - depth_values[:, 0]
-                outputs = self.model(imgs, cam_params, depth_values, gt_depths=depth_gt_ms)
+                outputs = self.model(imgs, cam_params, depth_values, gt_depths=depth_gt_ms, temperature=temperature)
 
                 loss, depth_loss = self.criterion(outputs, depth_gt_ms, mask_ms, dlossw=dlossw, depth_interval=depth_interval)
                 loss.backward()
@@ -90,11 +95,11 @@ class Trainer(BaseTrainer):
 
         if (epoch % self.config["trainer"]["eval_freq"] == 0) or (epoch == self.epochs - 1):
             del outputs
-            self._valid_epoch(epoch)
+            self._valid_epoch(epoch, 0.001)
 
         return self.train_metrics.mean()
 
-    def _valid_epoch(self, epoch, save_folder='saved/samples'):
+    def _valid_epoch(self, epoch, temperature, save_folder='saved/samples'):
         """
         Validate after training an epoch
         :param epoch: Integer, current training epoch.
@@ -127,7 +132,7 @@ class Trainer(BaseTrainer):
 
                     depth_values = sample_cuda["depth_values"]
                     depth_interval = depth_values[:, 1] - depth_values[:, 0]
-                    outputs = self.model(imgs, cam_params, depth_values) #, gt_depths=depth_gt_ms)
+                    outputs = self.model(imgs, cam_params, depth_values, temperature=temperature) #, gt_depths=depth_gt_ms)
 
                     loss, depth_loss = self.criterion(outputs, depth_gt_ms, mask_ms, dlossw=dlossw, depth_interval=depth_interval)
 

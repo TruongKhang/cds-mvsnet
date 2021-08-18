@@ -204,6 +204,8 @@ def save_depth(testlist, config):
 
             imgs, cam_params = sample_cuda["imgs"], sample_cuda["proj_matrices"]
             outputs = model(imgs, cam_params, sample_cuda["depth_values"])
+            torch.cuda.synchronize()
+            outputs["ps_map"] = model.feature.extract_ps_map()
 
             end_time = time.time()
             outputs = tensor2numpy(outputs)
@@ -215,20 +217,20 @@ def save_depth(testlist, config):
                                                       imgs[0].shape))
 
             # save depth maps and confidence maps
-            for filename, cam, img, depth_est, conf_stage1, conf_stage2, conf_stage3 in zip(filenames, cams, imgs, outputs["depth"], outputs["stage1"]["photometric_confidence"], outputs["stage2"]["photometric_confidence"],
-                                                                             outputs["photometric_confidence"]):
+            for filename, cam, img, depth_est, conf_stage1, conf_stage2, conf_stage3, ps_map in zip(filenames, cams, imgs, outputs["depth"], outputs["stage1"]["photometric_confidence"], outputs["stage2"]["photometric_confidence"],
+                                                                             outputs["photometric_confidence"], outputs["ps_map"]):
                 img = img[0]  # ref view
                 cam = cam[0]  # ref cam
                 depth_filename = os.path.join(args.outdir, filename.format('depth_est', '.pfm'))
                 confidence_filename = os.path.join(args.outdir, filename.format('confidence', '.pfm'))
                 cam_filename = os.path.join(args.outdir, filename.format('cams', '_cam.txt'))
                 img_filename = os.path.join(args.outdir, filename.format('images', '.jpg'))
-                ply_filename = os.path.join(args.outdir, filename.format('ply_local', '.ply'))
+                ps_filename = os.path.join(args.outdir, filename.format('ps_maps', '.png'))
                 os.makedirs(depth_filename.rsplit('/', 1)[0], exist_ok=True)
                 os.makedirs(confidence_filename.rsplit('/', 1)[0], exist_ok=True)
                 os.makedirs(cam_filename.rsplit('/', 1)[0], exist_ok=True)
                 os.makedirs(img_filename.rsplit('/', 1)[0], exist_ok=True)
-                os.makedirs(ply_filename.rsplit('/', 1)[0], exist_ok=True)
+                os.makedirs(ps_filename.rsplit('/', 1)[0], exist_ok=True)
                 # save depth maps
                 save_pfm(depth_filename, depth_est)
                 # depth_est = cv2.resize(depth_est, (args.max_w, args.max_h))
@@ -247,6 +249,8 @@ def save_depth(testlist, config):
                 img_bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
                 cv2.imwrite(img_filename, img_bgr)
 
+                ps_map = Image.fromarray((ps_map * 100).astype(np.uint16))
+                ps_map.save(ps_filename)
                 # vis
                 # print(photometric_confidence.mean(), photometric_confidence.min(), photometric_confidence.max())
                 # import matplotlib.pyplot as plt
@@ -439,15 +443,15 @@ if __name__ == '__main__':
             if not args.testpath_single_scene else [os.path.basename(args.testpath_single_scene)]
 
     # step1. save all the depth maps and the masks in outputs directory
-    # save_depth(testlist, config)
+    save_depth(testlist, config)
 
     # step2. filter saved depth maps with photometric confidence maps and geometric constraints
 
-    if args.filter_method != "gipuma":
-    #     #support multi-processing, the default number of worker is 4
-        pcd_filter(testlist, args.num_worker)
-    else:
-        prob_threshold = args.prob_threshold
-        prob_threshold = [float(p) for p in prob_threshold.split(',')]
-        gipuma_filter(testlist, args.outdir, prob_threshold, args.disp_threshold, args.num_consistent,
-                      args.fusibile_exe_path)
+    # if args.filter_method != "gipuma":
+    # #     #support multi-processing, the default number of worker is 4
+    #     pcd_filter(testlist, args.num_worker)
+    # else:
+    #     prob_threshold = args.prob_threshold
+    #     prob_threshold = [float(p) for p in prob_threshold.split(',')]
+    #     gipuma_filter(testlist, args.outdir, prob_threshold, args.disp_threshold, args.num_consistent,
+    #                   args.fusibile_exe_path)

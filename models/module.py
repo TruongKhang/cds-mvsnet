@@ -71,8 +71,8 @@ class Conv2d(nn.Module):
 
     def forward(self, x):
         if self.dynamic:
-            feat, epipole = x
-            y = self.conv(feat, epipole=epipole)
+            feat, epipole, temperature = x
+            y = self.conv(feat, epipole=epipole, temperature=temperature)
         else:
             y = self.conv(x)
         # y = self.conv(x)
@@ -80,7 +80,7 @@ class Conv2d(nn.Module):
             y = self.bn(y)
         if self.relu:
             y = F.leaky_relu(y, 0.1, inplace=True)
-        out = (y, x[1]) if self.dynamic else y
+        out = (y, x[1], x[2]) if self.dynamic else y
         return out
 
     def init_weights(self, init_method):
@@ -299,12 +299,12 @@ class FeatureNet(nn.Module):
         self.out_channels.append(base_channels*2)
         self.out_channels.append(base_channels)
 
-    def forward(self, x, epipole=None):
-        conv0, epipole0 = self.conv0((x, epipole))
+    def forward(self, x, epipole=None, temperature=0.001):
+        conv0, epipole0, _ = self.conv0((x, epipole, temperature))
         down_conv0, down_epipole0 = self.downsample1(conv0), epipole0 / 2
-        conv1, epipole1 = self.conv1((down_conv0, down_epipole0))
+        conv1, epipole1, _ = self.conv1((down_conv0, down_epipole0, temperature))
         down_conv1, down_epipole1 = self.downsample2(conv1), epipole1 / 2
-        conv2, _ = self.conv2((down_conv1, down_epipole1))
+        conv2, _, _ = self.conv2((down_conv1, down_epipole1, temperature))
 
         # conv0, _ = self.conv0((x, epipole))
         # down_conv0 = self.downsample1(conv0)
@@ -314,17 +314,17 @@ class FeatureNet(nn.Module):
 
         intra_feat = conv2
         outputs = {}
-        out = self.act1(self.out1(intra_feat, epipole=down_epipole1))
+        out = self.act1(self.out1(intra_feat, epipole=down_epipole1, temperature=temperature))
         outputs["stage1"] = out
 
         intra_feat = torch.cat((F.interpolate(intra_feat, scale_factor=2, mode="nearest"), conv1), dim=1)
         intra_feat = self.inner1(intra_feat)
-        out = self.act2(self.out2(intra_feat, epipole=down_epipole0))
+        out = self.act2(self.out2(intra_feat, epipole=down_epipole0, temperature=temperature))
         outputs["stage2"] = out
 
         intra_feat = torch.cat((F.interpolate(out, scale_factor=2, mode="nearest"), conv0), dim=1)
         intra_feat = self.inner2(intra_feat)
-        out = self.act3(self.out3(intra_feat, epipole=epipole))
+        out = self.act3(self.out3(intra_feat, epipole=epipole, temperature=temperature))
         outputs["stage3"] = out
 
         return outputs

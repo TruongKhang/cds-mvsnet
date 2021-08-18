@@ -99,6 +99,7 @@ class TAMVSNet(nn.Module):
         self.arch_mode = arch_mode
         self.cr_base_chs = cr_base_chs
         self.num_stage = len(ndepths)
+
         print("**********netphs:{}, depth_intervals_ratio:{},  grad:{}, chs:{}************".format(ndepths,
               depth_interals_ratio, self.grad_method, self.cr_base_chs))
 
@@ -124,10 +125,12 @@ class TAMVSNet(nn.Module):
             self.cost_regularization = nn.ModuleList([CostRegNet(in_channels=self.feature.out_channels[i],
                                                                  base_channels=self.cr_base_chs[i])
                                                       for i in range(self.num_stage)])
+        self.depth_params = list(self.cost_regularization.parameters())
         if self.refine:
             self.refine_network = Refinement()
+            self.depth_params += list(self.refine_network.parameters())
 
-    def forward(self, imgs, proj_matrices, depth_values, gt_depths=None):
+    def forward(self, imgs, proj_matrices, depth_values, gt_depths=None, temperature=0.001):
         depth_min = depth_values[:, [0]].unsqueeze(-1).unsqueeze(-1) #float(depth_values[0, 0].cpu().numpy())
         depth_max = depth_values[:, [-1]].unsqueeze(-1).unsqueeze(-1) #float(depth_values[0, -1].cpu().numpy())
         depth_interval = (depth_values[:, 1] - depth_values[:, 0]).unsqueeze(-1).unsqueeze(-1) #(depth_max - depth_min) / depth_values.size(1)
@@ -145,8 +148,8 @@ class TAMVSNet(nn.Module):
             fundamental_matrix = compute_Fmatrix(ref_proj, src_proj)
             ref_epipole = compute_epipole(fundamental_matrix)
             src_epipole = compute_epipole(torch.transpose(fundamental_matrix, 1, 2))
-            ref_feat = self.feature(F.interpolate(ref_img, (height, width)), epipole=ref_epipole)
-            src_feat = self.feature(F.interpolate(src_img, (height, width)), epipole=src_epipole)
+            ref_feat = self.feature(F.interpolate(ref_img, (height, width)), epipole=ref_epipole, temperature=temperature)
+            src_feat = self.feature(F.interpolate(src_img, (height, width)), epipole=src_epipole, temperature=temperature)
             features.append({"ref": ref_feat, "src": src_feat})
 
         outputs = {}
@@ -210,8 +213,12 @@ class TAMVSNet(nn.Module):
 
         # depth map refinement
         if self.refine:
-            refined_depth = self.refine_network(ref_img, depth.unsqueeze(1), depth_values[:, 0], depth_values[:, -1])
-            outputs["refined_depth"] = refined_depth.squeeze(1)
+            depth_min, depth_max = depth_values[:, 0], depth_values[:, -1]
+            cur_depth = depth.detach() / depth_interval
+            depth_min = depth_min / depth_interval[:, 0, 0]
+            depth_max = depth_max / depth_interval[:, 0, 0]
+            refined_depth = self.refine_network(ref_img, cur_depth.unsqueeze(1), depth_min, depth_max)
+            outputs["refined_depth"] = refined_depth.squeeze(1) * depth_interval
 
         return outputs
 
