@@ -34,7 +34,7 @@
         "type": "SGD",
         "args":{
             "lr": 0.01,
-            "weight_decay": 0.0
+            "weight_decay": 0.001
         }
     },
     "loss": "final_loss",

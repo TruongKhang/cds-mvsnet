@@ -114,22 +114,20 @@ class DynamicConv(nn.Module):
         normed_uv = torch.sqrt(u**2 + v**2)
         u, v = u / (normed_uv + 1e-6), v / (normed_uv + 1e-6)
 
-        # selected_conv = self.convs[-1]
-        #filtered_result = 0.0
-        #sum_mask = torch.zeros_like(surface)
-        weights = []
+        curvs = []
         results = []
         for idx, s in enumerate(self.size_kernels):
             curv = self.att_convs[idx](feature_vol)
             curv = (curv * torch.cat((u**2, 2*u*v, v**2), dim=1)).sum(dim=1, keepdim=True)
             # w = self.att_weights[idx](feature_vol)
-            weights.append(curv) #.unsqueeze(1))
+            curvs.append(curv) #.unsqueeze(1))
             results.append(self.convs[idx](feature_vol).unsqueeze(1))
-        weights = torch.cat(weights, dim=1) # [B, num_kernels, H, W]
-        weights = self.att_weights(weights)
+        curvs = torch.cat(curvs, dim=1) # [B, num_kernels, H, W]
+        weights = self.att_weights(curvs)
         weights = F.softmax(weights / temperature, dim=1)
         filtered_result = (torch.cat(results, dim=1) * weights.unsqueeze(2)).sum(dim=1)
-        return filtered_result #, sum_mask, t11, t12, t13
+        norm_curv = (curvs * weights).sum(dim=1, keepdim=True)
+        return filtered_result, norm_curv #, sum_mask, t11, t12, t13
 
 
 def read_cam_file(filename, interval_scale=1.0):

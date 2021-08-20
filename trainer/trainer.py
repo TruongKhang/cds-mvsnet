@@ -42,8 +42,8 @@ class Trainer(BaseTrainer):
         :return: A log that contains average loss and metric in this epoch.
         """
         self.model.train()
-        if epoch <= 5:
-            p = (epoch - 1) / 2.0
+        if epoch <= 6:
+            p = (epoch - 1) / 3.0
             temperature = np.power(10.0, -p)
         else:
             temperature = 0.01
@@ -95,7 +95,7 @@ class Trainer(BaseTrainer):
 
         if (epoch % self.config["trainer"]["eval_freq"] == 0) or (epoch == self.epochs - 1):
             del outputs
-            self._valid_epoch(epoch, 0.001)
+            self._valid_epoch(epoch, 0.01)
 
         return self.train_metrics.mean()
 

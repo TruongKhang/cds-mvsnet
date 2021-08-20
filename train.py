@@ -59,10 +59,10 @@ def main(config):
     criterion = getattr(module_loss, config['loss'])
 
     # build optimizer, learning rate scheduler. delete every lines containing lr_scheduler for disabling scheduler
-    mvsnet_params = filter(lambda p: p.requires_grad, model.depth_params)
+    mvsnet_params = filter(lambda p: p.requires_grad, model.parameters())
     mvsnet_optimizer = config.init_obj('optimizer', torch.optim, mvsnet_params)
-    mvsnet_optimizer.add_param_group({'params': filter(lambda p: p.requires_grad, model.feature.parameters()),
-                                       'lr': 0.0025, 'weight_decay': 0.001})
+    #mvsnet_optimizer.add_param_group({'params': filter(lambda p: p.requires_grad, model.feature.parameters()),
+    #                                   'lr': 0.0025, 'weight_decay': 0.001})
     # milestones = [len(data_loader) * int(epoch_idx) for epoch_idx in config["trainer"]["lrepochs"].split(':')[0].split(',')]
     # lr_gamma = 1 / float(config["trainer"]["lrepochs"].split(':')[1])
     # mvsnet_lr_sch = WarmupMultiStepLR(mvsnet_optimizer, milestones, gamma=lr_gamma,

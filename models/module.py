@@ -69,10 +69,10 @@ class Conv2d(nn.Module):
         # assert init_method in ["kaiming", "xavier"]
         # self.init_weights(init_method)
 
-    def forward(self, x):
+    def forward(self, x, epipole=None, temperature=0.001):
         if self.dynamic:
-            feat, epipole, temperature = x
-            y = self.conv(feat, epipole=epipole, temperature=temperature)
+            #feat, epipole, temperature = x
+            y, norm_curv = self.conv(x, epipole=epipole, temperature=temperature)
         else:
             y = self.conv(x)
         # y = self.conv(x)
@@ -80,7 +80,7 @@ class Conv2d(nn.Module):
             y = self.bn(y)
         if self.relu:
             y = F.leaky_relu(y, 0.1, inplace=True)
-        out = (y, x[1], x[2]) if self.dynamic else y
+        out = (y, norm_curv) if self.dynamic else y
         return out
 
     def init_weights(self, init_method):
@@ -268,22 +268,16 @@ class FeatureNet(nn.Module):
         self.base_channels = base_channels
         self.num_stage = num_stage
 
-        self.conv0 = nn.Sequential(
-            Conv2d(3, base_channels, (3, 7, 11), 1, dynamic=True),
-            Conv2d(base_channels, base_channels, (3, 5, 7), 1, dynamic=True),
-        )
+        self.conv00 = Conv2d(3, base_channels, (3, 7, 11), 1, dynamic=True)
+        self.conv01 = Conv2d(base_channels, base_channels, (3, 5, 7), 1, dynamic=True)
 
         self.downsample1 = Conv2d(base_channels, base_channels*2, 3, stride=2, padding=1)
-        self.conv1 = nn.Sequential(
-            Conv2d(base_channels*2, base_channels*2, (3, 5), 1, dynamic=True),
-            Conv2d(base_channels*2, base_channels*2, (3, 5), 1, dynamic=True),
-        )
+        self.conv10 = Conv2d(base_channels*2, base_channels*2, (3, 5), 1, dynamic=True)
+        self.conv11 = Conv2d(base_channels*2, base_channels*2, (3, 5), 1, dynamic=True)
 
         self.downsample2 = Conv2d(base_channels*2, base_channels*4, 3, stride=2, padding=1)
-        self.conv2 = nn.Sequential(
-            Conv2d(base_channels*4, base_channels*4, (1, 3), 1, dynamic=True),
-            Conv2d(base_channels*4, base_channels*4, (1, 3), 1, dynamic=True),
-        )
+        self.conv20 = Conv2d(base_channels*4, base_channels*4, (1, 3), 1, dynamic=True)
+        self.conv21 = Conv2d(base_channels*4, base_channels*4, (1, 3), 1, dynamic=True)
 
         self.out1 = DynamicConv(base_channels*4, base_channels*4, size_kernels=(1, 3))
         self.act1 = nn.Sequential(nn.InstanceNorm2d(base_channels*4), nn.Tanh())
@@ -300,32 +294,35 @@ class FeatureNet(nn.Module):
         self.out_channels.append(base_channels)
 
     def forward(self, x, epipole=None, temperature=0.001):
-        conv0, epipole0, _ = self.conv0((x, epipole, temperature))
-        down_conv0, down_epipole0 = self.downsample1(conv0), epipole0 / 2
-        conv1, epipole1, _ = self.conv1((down_conv0, down_epipole0, temperature))
-        down_conv1, down_epipole1 = self.downsample2(conv1), epipole1 / 2
-        conv2, _, _ = self.conv2((down_conv1, down_epipole1, temperature))
+        conv00, nc00 = self.conv00(x, epipole, temperature)
+        conv01, nc01 = self.conv01(conv00, epipole, temperature)
+        down_conv0, down_epipole0 = self.downsample1(conv01), epipole / 2
+        conv10, nc10 = self.conv10(down_conv0, down_epipole0, temperature)
+        conv11, nc11 = self.conv11(conv10, down_epipole0, temperature)
+        down_conv1, down_epipole1 = self.downsample2(conv11), epipole / 4
+        conv20, nc20 = self.conv20(down_conv1, down_epipole1, temperature)
+        conv21, nc21 = self.conv21(conv20, down_epipole1, temperature)
 
-        # conv0, _ = self.conv0((x, epipole))
-        # down_conv0 = self.downsample1(conv0)
-        # conv1, _ = self.conv1((down_conv0, None))
-        # down_conv1 = self.downsample2(conv1)
-        # conv2, _ = self.conv2((down_conv1, None))
-
-        intra_feat = conv2
+        intra_feat = conv21
         outputs = {}
-        out = self.act1(self.out1(intra_feat, epipole=down_epipole1, temperature=temperature))
-        outputs["stage1"] = out
+        out, nc22 = self.out1(intra_feat, epipole=down_epipole1, temperature=temperature)
+        out = self.act1(out)
+        nc_sum = (nc20 ** 2 + nc21**2 + nc22 ** 2) / 3
+        outputs["stage1"] = out, nc_sum, nc22.abs()
 
-        intra_feat = torch.cat((F.interpolate(intra_feat, scale_factor=2, mode="nearest"), conv1), dim=1)
+        intra_feat = torch.cat((F.interpolate(intra_feat, scale_factor=2, mode="nearest"), conv11), dim=1)
         intra_feat = self.inner1(intra_feat)
-        out = self.act2(self.out2(intra_feat, epipole=down_epipole0, temperature=temperature))
-        outputs["stage2"] = out
+        out, nc12 = self.out2(intra_feat, epipole=down_epipole0, temperature=temperature)
+        out = self.act2(out)
+        nc_sum = (nc10 ** 2 + nc11 ** 2 + nc12 ** 2) / 3
+        outputs["stage2"] = out, nc_sum, nc12.abs()
 
-        intra_feat = torch.cat((F.interpolate(out, scale_factor=2, mode="nearest"), conv0), dim=1)
+        intra_feat = torch.cat((F.interpolate(out, scale_factor=2, mode="nearest"), conv01), dim=1)
         intra_feat = self.inner2(intra_feat)
-        out = self.act3(self.out3(intra_feat, epipole=epipole, temperature=temperature))
-        outputs["stage3"] = out
+        out, nc02 = self.out3(intra_feat, epipole=epipole, temperature=temperature)
+        out = self.act3(out)
+        nc_sum = (nc00 ** 2 + nc01 ** 2 + nc02 ** 2) / 3
+        outputs["stage3"] = out, nc_sum, nc02.abs()
 
         return outputs
 
