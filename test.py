@@ -52,6 +52,7 @@ parser.add_argument('--max_h', type=int, default=864, help='testing max h')
 parser.add_argument('--max_w', type=int, default=1152, help='testing max w')
 parser.add_argument('--fix_res', action='store_true', help='scene all using same res')
 parser.add_argument('--depth_scale', type=float, default=1.0, help='depth scale')
+parser.add_argument('--temperature', type=float, default=0.01, help='temperature of softmax')
 
 parser.add_argument('--num_worker', type=int, default=4, help='depth_filer worker')
 parser.add_argument('--save_freq', type=int, default=20, help='save freq of local pcd')
@@ -197,15 +198,15 @@ def save_depth(testlist, config):
 
     with torch.no_grad():
         for batch_idx, sample in enumerate(test_data_loader):
-            start_time = time.time()
+            #start_time = time.time()
             sample_cuda = tocuda(sample)
-            is_begin = sample['is_begin'].type(torch.uint8)
-            num_stage = len(config["arch"]["args"]["ndepths"])
-
+            # is_begin = sample['is_begin'].type(torch.uint8)
+            num_stage = 4 #len(config["arch"]["args"]["ndepths"])
+            start_time = time.time()
             imgs, cam_params = sample_cuda["imgs"], sample_cuda["proj_matrices"]
-            outputs = model(imgs, cam_params, sample_cuda["depth_values"])
+            outputs = model(imgs, cam_params, sample_cuda["depth_values"], temperature=args.temperature)
             torch.cuda.synchronize()
-            outputs["ps_map"] = model.feature.extract_ps_map()
+            #outputs["ps_map"] = model.feature.extract_ps_map()
 
             end_time = time.time()
             outputs = tensor2numpy(outputs)
@@ -217,20 +218,20 @@ def save_depth(testlist, config):
                                                       imgs[0].shape))
 
             # save depth maps and confidence maps
-            for filename, cam, img, depth_est, conf_stage1, conf_stage2, conf_stage3, ps_map in zip(filenames, cams, imgs, outputs["depth"], outputs["stage1"]["photometric_confidence"], outputs["stage2"]["photometric_confidence"],
-                                                                             outputs["photometric_confidence"], outputs["ps_map"]):
+            for filename, cam, img, depth_est, conf_stage1, conf_stage2, conf_stage3 in zip(filenames, cams, imgs, outputs["refined_depth"], outputs["stage1"]["photometric_confidence"], outputs["stage2"]["photometric_confidence"],
+                                                                             outputs["photometric_confidence"]): #, outputs["ps_map"]):
                 img = img[0]  # ref view
                 cam = cam[0]  # ref cam
                 depth_filename = os.path.join(args.outdir, filename.format('depth_est', '.pfm'))
                 confidence_filename = os.path.join(args.outdir, filename.format('confidence', '.pfm'))
                 cam_filename = os.path.join(args.outdir, filename.format('cams', '_cam.txt'))
                 img_filename = os.path.join(args.outdir, filename.format('images', '.jpg'))
-                ps_filename = os.path.join(args.outdir, filename.format('ps_maps', '.png'))
+                #ps_filename = os.path.join(args.outdir, filename.format('ps_maps', '.png'))
                 os.makedirs(depth_filename.rsplit('/', 1)[0], exist_ok=True)
                 os.makedirs(confidence_filename.rsplit('/', 1)[0], exist_ok=True)
                 os.makedirs(cam_filename.rsplit('/', 1)[0], exist_ok=True)
                 os.makedirs(img_filename.rsplit('/', 1)[0], exist_ok=True)
-                os.makedirs(ps_filename.rsplit('/', 1)[0], exist_ok=True)
+                #os.makedirs(ps_filename.rsplit('/', 1)[0], exist_ok=True)
                 # save depth maps
                 save_pfm(depth_filename, depth_est)
                 # depth_est = cv2.resize(depth_est, (args.max_w, args.max_h))
@@ -238,9 +239,10 @@ def save_depth(testlist, config):
                 # depth_est.save(depth_filename)
                 # np.save(depth_filename, depth_est)
                 # save confidence maps
-                h, w = conf_stage3.shape[0], conf_stage3.shape[1]
+                h, w = depth_est.shape[0], depth_est.shape[1]
                 conf_stage1 = cv2.resize(conf_stage1, (w, h), interpolation=cv2.INTER_NEAREST)
                 conf_stage2 = cv2.resize(conf_stage2, (w, h), interpolation=cv2.INTER_NEAREST)
+                conf_stage3 = cv2.resize(conf_stage3, (w, h), interpolation=cv2.INTER_NEAREST)
                 photometric_confidence = np.stack([conf_stage1, conf_stage2, conf_stage3]).transpose([1,2,0])
                 save_pfm(confidence_filename, photometric_confidence)
                 # save cams, img
@@ -249,8 +251,8 @@ def save_depth(testlist, config):
                 img_bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
                 cv2.imwrite(img_filename, img_bgr)
 
-                ps_map = Image.fromarray((ps_map * 100).astype(np.uint16))
-                ps_map.save(ps_filename)
+                #ps_map = Image.fromarray((ps_map * 100).astype(np.uint16))
+                #ps_map.save(ps_filename)
                 # vis
                 # print(photometric_confidence.mean(), photometric_confidence.min(), photometric_confidence.max())
                 # import matplotlib.pyplot as plt

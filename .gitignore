@@ -135,3 +135,5 @@ pretrains
 tt_outputs
 *outputs*
 move.py
+*.ckpt
+*.pth

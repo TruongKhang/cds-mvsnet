@@ -34,9 +34,9 @@ def final_loss(inputs, depth_gt_ms, mask_ms, **kwargs):
                                                            pos_weight=balanced_weight)
         if depth_loss_weights is not None:
             stage_idx = int(stage_key.replace("stage", "")) - 1
-            total_loss = total_loss + depth_loss_weights[stage_idx] * (depth_loss + 5 * feat_loss + norm_curv_reg)
+            total_loss = total_loss + depth_loss_weights[stage_idx] * (depth_loss + 5 * feat_loss + 0.1*norm_curv_reg)
         else:
-            total_loss += 1.0 * (depth_loss+ 5 * feat_loss + norm_curv_reg)
+            total_loss += 1.0 * (depth_loss+ 5 * feat_loss + 0.1*norm_curv_reg)
 
     if "refined_depth" in inputs:
         depth_gt = depth_gt_ms["stage4"] / depth_interval

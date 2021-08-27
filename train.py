@@ -32,12 +32,13 @@ def main(config):
         data_loader = getattr(module_data, dl_name)(**train_dl_args)
         train_data_loaders.append(data_loader)
         # setup valid_data_loader instances
+        
         val_kwags = {
             "data_list": dl_args['val_data_list'],
             "mode": "val",
             "num_srcs": 5,
             "shuffle": False,
-            "batch_size": 1
+            "batch_size": 2 if 'dtu' in dl_args['data_path'] else 5
         }
         val_dl_args = train_dl_args.copy()
         val_dl_args.update(val_kwags)
@@ -62,7 +63,7 @@ def main(config):
     mvsnet_params = filter(lambda p: p.requires_grad, model.parameters())
     mvsnet_optimizer = config.init_obj('optimizer', torch.optim, mvsnet_params)
     #mvsnet_optimizer.add_param_group({'params': filter(lambda p: p.requires_grad, model.feature.parameters()),
-    #                                   'lr': 0.0025, 'weight_decay': 0.001})
+    #                                   'lr': 0.01, 'weight_decay': 0.0001})
     # milestones = [len(data_loader) * int(epoch_idx) for epoch_idx in config["trainer"]["lrepochs"].split(':')[0].split(',')]
     # lr_gamma = 1 / float(config["trainer"]["lrepochs"].split(':')[1])
     # mvsnet_lr_sch = WarmupMultiStepLR(mvsnet_optimizer, milestones, gamma=lr_gamma,

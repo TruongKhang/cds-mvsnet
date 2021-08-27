@@ -405,9 +405,14 @@ class Refinement(nn.Module):
         super(Refinement, self).__init__()
 
         # img: [B,3,H,W]
+        #self.conv0 = nn.Sequential(ConvBnReLU(in_channels=3, out_channels=8),
+        #                           ConvBnReLU(in_channels=8, out_channels=8),
+        #                           ConvBnReLU(in_channels=8, out_channels=8))
         self.conv0 = ConvBnReLU(in_channels=3, out_channels=8)
         # depth map:[B,1,H/2,W/2]
+        #self.conv1 = nn.Sequential(nn.Conv2d(1, 8, 3, padding=1), nn.ReLU(inplace=True))
         self.conv1 = ConvBnReLU(in_channels=1, out_channels=8)
+        #self.conv2 = nn.Sequential(nn.Conv2d(8, 8, 3, padding=1), nn.ReLU(inplace=True))
         self.conv2 = ConvBnReLU(in_channels=8, out_channels=8)
         self.deconv = nn.ConvTranspose2d(
             in_channels=8, out_channels=8, kernel_size=3, padding=1, output_padding=1, stride=2, bias=False
@@ -415,6 +420,11 @@ class Refinement(nn.Module):
 
         self.bn = nn.BatchNorm2d(8)
         self.conv3 = ConvBnReLU(in_channels=16, out_channels=8)
+                                   #ConvBnReLU(in_channels=8, out_channels=8),
+                                   #ConvBnReLU(in_channels=8, out_channels=8))
+        #self.conv3 = nn.Sequential(nn.Conv2d(8, 8, 3, padding=1), nn.ReLU(inplace=True),
+        #                           nn.Conv2d(8, 8, 3, padding=1), nn.ReLU(inplace=True),
+        #                           nn.Conv2d(8, 8, 3, padding=1), nn.ReLU(inplace=True))
         self.res = nn.Conv2d(in_channels=8, out_channels=1, kernel_size=3, padding=1, bias=False)
 
     def forward(
@@ -433,10 +443,10 @@ class Refinement(nn.Module):
         batch_size = depth_min.size()[0]
         # pre-scale the depth map into [0,1]
         depth = (depth_0 - depth_min.view(batch_size, 1, 1, 1)) / (
-            depth_max.view(batch_size, 1, 1, 1) - depth_min.view(batch_size, 1, 1, 1)
-        )
+            depth_max.view(batch_size, 1, 1, 1) - depth_min.view(batch_size, 1, 1, 1)) * 10
 
         conv0 = self.conv0(img)
+        #deconv = F.relu(self.deconv(self.conv2(self.conv1(depth))), inplace=True)
         deconv = F.relu(self.bn(self.deconv(self.conv2(self.conv1(depth)))), inplace=True)
         cat = torch.cat((deconv, conv0), dim=1)
         del deconv, conv0
@@ -444,11 +454,9 @@ class Refinement(nn.Module):
         res = self.res(self.conv3(cat))
         del cat
 
-        depth = F.interpolate(depth, scale_factor=2, mode="nearest") + res
+        depth = (F.interpolate(depth, scale_factor=2, mode="bilinear", align_corners=True) + res) / 10
         # convert the normalized depth back
-        depth = depth * (depth_max.view(batch_size, 1, 1, 1) - depth_min.view(batch_size, 1, 1, 1)) + depth_min.view(
-            batch_size, 1, 1, 1
-        )
+        depth = depth * (depth_max.view(batch_size, 1, 1, 1) - depth_min.view(batch_size, 1, 1, 1)) + depth_min.view(batch_size, 1, 1, 1)
 
         return depth
 

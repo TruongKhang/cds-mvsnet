@@ -11,7 +11,8 @@ Align_Corners_Range = False
 class StageNet(nn.Module):
     def __init__(self, num_mvs_stages=3):
         super(StageNet, self).__init__()
-        self.vis = nn.ModuleList([nn.Sequential(ConvBnReLU(2, 32), nn.Conv2d(32, 1, 1), nn.Sigmoid()) for _ in range(num_mvs_stages)])
+        #self.vis = nn.ModuleList([nn.Sequential(ConvBnReLU(2, 32), nn.Conv2d(32, 1, 1), nn.Sigmoid()) for _ in range(num_mvs_stages)])
+        self.vis = nn.ModuleList([nn.Sequential(ConvBnReLU(2, 16), ConvBnReLU(16, 16), ConvBnReLU(16, 16), nn.Conv2d(16, 1, 1), nn.Sigmoid()) for _ in range(num_mvs_stages)])
 
     def forward(self, features, proj_matrices, depth_values, num_depth, cost_regularization, prob_volume_init=None, stage_idx=0,
                 gt_depth=None):
@@ -71,10 +72,10 @@ class StageNet(nn.Module):
             # del warped_volume
         # aggregate multiple feature volumes by variance
         # volume_variance = volume_sq_sum.div_(num_views).sub_(volume_sum.div_(num_views).pow_(2))
-        volume_mean = volume_sum / vis_sum.unsqueeze(1) #volume_sum / (num_views - 1)
-        feat_distance_vol = feat_distance_vol / vis_sum
+        volume_mean = volume_sum / (vis_sum.unsqueeze(1) + 1e-6) #volume_sum / (num_views - 1)
+        feat_distance_vol = feat_distance_vol / (vis_sum + 1e-6)
         if gt_depth is not None:
-            gt_feat_distance = gt_feat_distance / vis_sum #feat_distance_vol / (num_views - 1)
+            gt_feat_distance = gt_feat_distance / (vis_sum + 1e-6) #feat_distance_vol / (num_views - 1)
             feat_distance_vol = torch.cat((feat_distance_vol, gt_feat_distance), dim=1)
         nc_mean = nc_sum / (num_views - 1)
 
@@ -132,10 +133,10 @@ class TAMVSNet(nn.Module):
             self.cost_regularization = nn.ModuleList([CostRegNet(in_channels=self.feature.out_channels[i],
                                                                  base_channels=self.cr_base_chs[i])
                                                       for i in range(self.num_stage)])
-        # self.depth_params = list(self.cost_regularization.parameters()) + list(self.stage_net.parameters())
+        #self.depth_params = list(self.cost_regularization.parameters()) + list(self.stage_net.parameters())
         if self.refine:
             self.refine_network = Refinement()
-            # self.depth_params += list(self.refine_network.parameters())
+            #self.depth_params += list(self.refine_network.parameters())
 
     def forward(self, imgs, proj_matrices, depth_values, gt_depths=None, temperature=0.001):
         depth_min = depth_values[:, [0]].unsqueeze(-1).unsqueeze(-1) #float(depth_values[0, 0].cpu().numpy())

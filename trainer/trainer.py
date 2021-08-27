@@ -42,8 +42,8 @@ class Trainer(BaseTrainer):
         :return: A log that contains average loss and metric in this epoch.
         """
         self.model.train()
-        if epoch <= 6:
-            p = (epoch - 1) / 3.0
+        if epoch <= 4:
+            p = (epoch - 1) / 2.0
             temperature = np.power(10.0, -p)
         else:
             temperature = 0.01
@@ -132,12 +132,14 @@ class Trainer(BaseTrainer):
 
                     depth_values = sample_cuda["depth_values"]
                     depth_interval = depth_values[:, 1] - depth_values[:, 0]
+                    #print(imgs.size(), cam_params["stage1"].size(), depth_values.size())
                     outputs = self.model(imgs, cam_params, depth_values, temperature=temperature) #, gt_depths=depth_gt_ms)
 
                     loss, depth_loss = self.criterion(outputs, depth_gt_ms, mask_ms, dlossw=dlossw, depth_interval=depth_interval)
 
                     depth_est = outputs["refined_depth"].detach()
                     di = depth_interval[0].item() / 2.65
+                    #for idd in range(depth_est.size(0)):
                     scalar_outputs = {"loss": loss,
                                       "depth_loss": depth_loss,
                                       "abs_depth_error": AbsDepthError_metrics(depth_est, depth_gt, mask > 0.5),
@@ -161,6 +163,7 @@ class Trainer(BaseTrainer):
                                                                                    [di*20.0, 1e5]),
                                       }
 
+                        #self.valid_metrics.update(tensor2float(scalar_outputs))
                     if batch_idx % self.log_step == 0:
                         # save_scalars(logger, 'test', scalar_outputs, global_step)
                         # save_images(logger, 'test', image_outputs, global_step)
