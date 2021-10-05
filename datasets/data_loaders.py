@@ -13,14 +13,15 @@ np.random.seed(1234)
 class DTULoader(DataLoader):
 
     def __init__(self, data_path, data_list, mode, num_srcs, num_depths, interval_scale=1.0,
-                 shuffle=True, seq_size=49, batch_size=1, fix_res=False, max_h=None, max_w=None):
+                 shuffle=True, seq_size=49, batch_size=1, fix_res=False, max_h=None, max_w=None,
+                 dataset_eval='dtu', refine=True):
         if (mode == 'train') or (mode == 'val'):
             self.mvs_dataset = DTUMVSDataset(data_path, data_list, mode, num_srcs, num_depths, interval_scale,
                                              shuffle=shuffle, seq_size=seq_size, batch_size=batch_size)
         else:
             self.mvs_dataset = MVSDataset(data_path, data_list, mode, num_srcs, num_depths, interval_scale,
                                           shuffle=shuffle, seq_size=seq_size, batch_size=batch_size,
-                                          max_h=max_h, max_w=max_w, fix_res=fix_res)
+                                          max_h=max_h, max_w=max_w, fix_res=fix_res, dataset=dataset_eval, refine=refine)
         drop_last = True if mode == 'train' else False
         super().__init__(self.mvs_dataset, batch_size=batch_size, shuffle=shuffle,
                          num_workers=4, pin_memory=True, drop_last=drop_last)
@@ -41,7 +42,7 @@ class BlendedLoader(DataLoader):
         else:
             self.mvs_dataset = MVSDataset(data_path, data_list, mode, num_srcs, num_depths, interval_scale,
                                           shuffle=shuffle, seq_size=seq_size, batch_size=batch_size,
-                                          max_h=max_h, max_w=max_w, fix_res=fix_res)
+                                          max_h=max_h, max_w=max_w, fix_res=fix_res, dataset='dtu')
         drop_last = True if mode == 'train' else False
         super().__init__(self.mvs_dataset, batch_size=batch_size, shuffle=shuffle,
                          num_workers=4, pin_memory=True, drop_last=drop_last)

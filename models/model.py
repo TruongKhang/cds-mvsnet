@@ -144,7 +144,8 @@ class TAMVSNet(nn.Module):
         depth_interval = (depth_values[:, 1] - depth_values[:, 0]).unsqueeze(-1).unsqueeze(-1) #(depth_max - depth_min) / depth_values.size(1)
 
         batch_size, nviews, height, width = imgs.shape[0], imgs.shape[1], imgs.shape[3], imgs.shape[4]
-        height, width = height // 2, width // 2
+        if self.refine:
+            height, width = height // 2, width // 2
         # step 1. feature extraction
         features = []
         list_imgs = torch.unbind(imgs, dim=1)
@@ -172,19 +173,6 @@ class TAMVSNet(nn.Module):
             stage_scale = self.stage_infos["stage{}".format(stage_idx + 1)]["scale"]
             gt_depth_stage = gt_depths[stage_name].unsqueeze(1) if gt_depths is not None else None
             di_stage = depth_interval.unsqueeze(1) * stage_scale
-            """if gt_depths is not None:
-                dl = (gt_depth_stage - depth_min).abs()
-                dr = (gt_depth_stage - depth_max).abs()
-                nl_samples = dl / (dl + dr) * self.ndepths[stage_idx]
-                nl_samples = nl_samples.int().float()
-                # nr_samples = self.ndepths[stage_idx] - nl_samples
-                cur_depth_min = gt_depth_stage - di_stage * nl_samples
-                # cur_depth_max = cur_depth + di_stage * nr_samples
-                feat_depth_samples = cur_depth_min + torch.arange(self.ndepths[stage_idx] + 1,
-                                                             device=gt_depth_stage.device).unsqueeze(0).unsqueeze(
-                    -1).unsqueeze(-1) * di_stage
-            else:
-                feat_depth_samples = None"""
 
             if depth is not None:
                 if self.grad_method == "detach":
@@ -230,6 +218,8 @@ class TAMVSNet(nn.Module):
             depth_max = depth_max / depth_interval[:, 0, 0]
             refined_depth = self.refine_network(ref_img, cur_depth.unsqueeze(1), depth_min, depth_max)
             outputs["refined_depth"] = refined_depth.squeeze(1) * depth_interval
+        else:
+            outputs["refined_depth"] = depth
 
         return outputs
 

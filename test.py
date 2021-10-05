@@ -19,6 +19,7 @@ import fusion
 from multiprocessing import Pool
 from functools import partial
 import signal
+import open3d as o3d
 
 cudnn.benchmark = True
 
@@ -27,7 +28,7 @@ parser.add_argument('--model', default='mvsnet', help='select model')
 parser.add_argument('--device', default=None, type=str, help='indices of GPUs to enable (default: all)')
 parser.add_argument('--config', default=None, type=str, help='config file path (default: None)')
 
-parser.add_argument('--dataset', default='dtu_yao_eval', help='select dataset')
+parser.add_argument('--dataset', default='dtu', help='select dataset')
 parser.add_argument('--testpath', help='testing data dir for some scenes')
 parser.add_argument('--testpath_single_scene', help='testing data path for single scene')
 parser.add_argument('--testlist', help='testing scene list')
@@ -41,10 +42,12 @@ parser.add_argument('--display', action='store_true', help='display depth images
 
 parser.add_argument('--share_cr', action='store_true', help='whether share the cost volume regularization')
 
-parser.add_argument('--ndepths', type=str, default="48,32,8", help='ndepths')
-parser.add_argument('--depth_inter_r', type=str, default="4,2,1", help='depth_intervals_ratio')
+parser.add_argument('--ndepths', type=str, default=None, help='ndepths')
+parser.add_argument('--depth_inter_r', type=str, default=None, help='depth_intervals_ratio')
 parser.add_argument('--cr_base_chs', type=str, default="8,8,8", help='cost regularization base channels')
 parser.add_argument('--grad_method', type=str, default="detach", choices=["detach", "undetach"], help='grad method')
+parser.add_argument('--no_refinement', action="store_true", help='depth refinement in last stage')
+parser.add_argument('--full_res', action="store_true", help='full resolution prediction')
 
 parser.add_argument('--interval_scale', type=float, required=True, help='the depth interval scale')
 parser.add_argument('--num_view', type=int, default=3, help='num of view')
@@ -61,13 +64,14 @@ parser.add_argument('--save_freq', type=int, default=20, help='save freq of loca
 parser.add_argument('--filter_method', type=str, default='normal', choices=["gipuma", "normal"], help="filter method")
 
 # filter
-parser.add_argument('--conf', type=str, default='0.9', help='prob confidence')
+parser.add_argument('--conf', type=str, default='0.0,0.0,0.0', help='prob confidence')
 parser.add_argument('--thres_view', type=int, default=3, help='threshold of num view')
 parser.add_argument('--thres_disp', type=float, default=1.0, help='threshold of disparity')
+parser.add_argument('--downsample', type=float, default=None, help='downsampling point cloud')
 
 # filter by gimupa
 parser.add_argument('--fusibile_exe_path', type=str, default='./fusibile/fusibile')
-parser.add_argument('--prob_threshold', type=str, default='0.8')
+parser.add_argument('--prob_threshold', type=str, default='0.0,0.0,0.0')
 parser.add_argument('--disp_threshold', type=float, default='0.2')
 parser.add_argument('--num_consistent', type=float, default='3')
 
@@ -78,8 +82,6 @@ print("argv:", sys.argv[1:])
 print_args(args)
 if args.testpath_single_scene:
     args.testpath = os.path.dirname(args.testpath_single_scene)
-
-num_stage = len([int(nd) for nd in args.ndepths.split(",") if nd])
 
 Interval_Scale = args.interval_scale
 print("***********Interval_Scale**********\n", Interval_Scale)
@@ -170,15 +172,19 @@ def save_depth(testlist, config):
         "num_depths": args.numdepth,
         "interval_scale": Interval_Scale,
         "shuffle": False,
-        "seq_size": 49,
         "batch_size": 1,
         "fix_res": args.fix_res,
         "max_h": args.max_h,
-        "max_w": args.max_w
+        "max_w": args.max_w,
+        "dataset_eval": args.dataset,
+        "refine": not args.no_refinement
     }
-    test_data_loader = getattr(module_data, config['data_loader'][0]['type'])(**init_kwags)
+    test_data_loader = module_data.DTULoader(**init_kwags)
     # model
     # build models architecture
+    if args.no_refinement:
+        config["arch"]["args"]["refine"] = False
+    print("model params: ", config["arch"]["args"])
     model = config.init_obj('arch', module_arch)
 
     print('Loading checkpoint: {} ...'.format(config.resume))
@@ -189,33 +195,35 @@ def save_depth(testlist, config):
         new_state_dict[key.replace('module.', '')] = val
     if config['n_gpu'] > 1:
         model = torch.nn.DataParallel(model)
-    model.load_state_dict(new_state_dict)
+    model.load_state_dict(new_state_dict, strict=False)
 
     # prepare models for testing
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = model.to(device)
     model.eval()
 
+    times = []
+
     with torch.no_grad():
         for batch_idx, sample in enumerate(test_data_loader):
-            #start_time = time.time()
-            sample_cuda = tocuda(sample)
-            # is_begin = sample['is_begin'].type(torch.uint8)
-            num_stage = 4 #len(config["arch"]["args"]["ndepths"])
+            # torch.cuda.synchronize()
             start_time = time.time()
+            sample_cuda = tocuda(sample)
+            num_stage = 3 if args.no_refinement else 4
             imgs, cam_params = sample_cuda["imgs"], sample_cuda["proj_matrices"]
             outputs = model(imgs, cam_params, sample_cuda["depth_values"], temperature=args.temperature)
-            torch.cuda.synchronize()
-            #outputs["ps_map"] = model.feature.extract_ps_map()
+            # torch.cuda.synchronize()
+            # outputs["ps_map"] = model.feature.extract_ps_map()
 
             end_time = time.time()
+            times.append(end_time - start_time)
             outputs = tensor2numpy(outputs)
             del sample_cuda
             filenames = sample["filename"]
             cams = sample["proj_matrices"]["stage{}".format(num_stage)].numpy()
             imgs = sample["imgs"].numpy()
             print('Iter {}/{}, Time:{} Res:{}'.format(batch_idx, len(test_data_loader), end_time - start_time,
-                                                      imgs[0].shape))
+                                                      outputs["refined_depth"][0].shape))
 
             # save depth maps and confidence maps
             for filename, cam, img, depth_est, conf_stage1, conf_stage2, conf_stage3 in zip(filenames, cams, imgs, outputs["refined_depth"], outputs["stage1"]["photometric_confidence"], outputs["stage2"]["photometric_confidence"],
@@ -234,10 +242,6 @@ def save_depth(testlist, config):
                 #os.makedirs(ps_filename.rsplit('/', 1)[0], exist_ok=True)
                 # save depth maps
                 save_pfm(depth_filename, depth_est)
-                # depth_est = cv2.resize(depth_est, (args.max_w, args.max_h))
-                # depth_est = Image.fromarray((depth_est*100).astype(np.uint16))
-                # depth_est.save(depth_filename)
-                # np.save(depth_filename, depth_est)
                 # save confidence maps
                 h, w = depth_est.shape[0], depth_est.shape[1]
                 conf_stage1 = cv2.resize(conf_stage1, (w, h), interpolation=cv2.INTER_NEAREST)
@@ -246,8 +250,11 @@ def save_depth(testlist, config):
                 photometric_confidence = np.stack([conf_stage1, conf_stage2, conf_stage3]).transpose([1,2,0])
                 save_pfm(confidence_filename, photometric_confidence)
                 # save cams, img
+                img = np.transpose(img, (1, 2, 0))
+                img = cv2.resize(img, (w, h), interpolation=cv2.INTER_NEAREST)
                 write_cam(cam_filename, cam)
-                img = np.clip(np.transpose(img, (1, 2, 0)) * 255, 0, 255).astype(np.uint8)
+                img = np.clip(img * 255, 0, 255).astype(np.uint8)
+                # print(img.shape)
                 img_bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
                 cv2.imwrite(img_filename, img_bgr)
 
@@ -274,6 +281,7 @@ def save_depth(testlist, config):
                 if batch_idx % args.save_freq == 0:
                     generate_pointcloud(downsample_img, depth_est, ply_filename, cam[1, :3, :3])"""
 
+    print("average time: ", sum(times) / len(times))
     torch.cuda.empty_cache()
     gc.collect()
 
@@ -309,7 +317,7 @@ class TTDataset(Dataset):
         confidence = read_pfm(os.path.join(self.scan_folder, 'confidence/{:0>8}.pfm'.format(id_ref)))[0]
         confidence = np.array(confidence, dtype=np.float32).transpose([2, 0, 1])
 
-        src_depths, src_cams = [], []
+        src_depths, src_confs, src_cams = [], [], []
         for ids in id_srcs:
             src_intrinsics, src_extrinsics = read_camera_parameters(
                 os.path.join(self.scan_folder, 'cams/{:0>8}_cam.txt'.format(ids)))
@@ -321,13 +329,17 @@ class TTDataset(Dataset):
             # the estimated depth of the source view
             src_depth_est = read_pfm(os.path.join(self.scan_folder, 'depth_est/{:0>8}.pfm'.format(ids)))[0]
             src_depths.append(np.array(src_depth_est, dtype=np.float32))
+            src_conf = read_pfm(os.path.join(self.scan_folder, 'confidence/{:0>8}.pfm'.format(ids)))[0]
+            src_confs.append(np.array(src_conf, dtype=np.float32).transpose([2, 0, 1]))
         src_depths = np.expand_dims(np.stack(src_depths, axis=0), axis=1)
+        src_confs = np.stack(src_confs, axis=0)
         src_cams = np.stack(src_cams, axis=0)
         return {"ref_depth": np.expand_dims(ref_depth_est, axis=0),
                 "ref_cam": ref_cam,
                 "ref_conf": confidence, #np.expand_dims(confidence, axis=0),
                 "src_depths": src_depths,
                 "src_cams": src_cams,
+                "src_confs": src_confs,
                 "ref_img": ref_img,
                 "ref_id": id_ref}
 
@@ -345,6 +357,9 @@ def filter_depth(pair_folder, scan_folder, out_folder, plyfilename):
         #if sample_np.get('skip') is not None and np.any(sample_np['skip']): continue
         #sample = {attr: torch.from_numpy(sample_np[attr]).float().cuda() for attr in sample_np if
         #          attr not in ['skip', 'id']}
+        for ids in range(sample["src_depths"].size(1)):
+            src_prob_mask = fusion.prob_filter(sample['src_confs'][:, ids, ...], prob_threshold)
+            sample["src_depths"][:, ids, ...] *= src_prob_mask.float()
 
         prob_mask = fusion.prob_filter(sample['ref_conf'], prob_threshold)
 
@@ -359,8 +374,12 @@ def filter_depth(pair_folder, scan_folder, out_folder, plyfilename):
         idx_img = fusion.get_pixel_grids(*ref_depth_ave.size()[-2:]).unsqueeze(0)
         idx_cam = fusion.idx_img2cam(idx_img, ref_depth_ave, sample['ref_cam'])
         points = fusion.idx_cam2world(idx_cam, sample['ref_cam'])[..., :3, 0].permute(0, 3, 1, 2)
+        #cam_center = (- sample['ref_cam'][:,0,:3,:3].transpose(-2,-1) @ sample['ref_cam'][:,0,:3,3:])[...,0]
+        #dir_vecs = cam_center.unsqueeze(-1).unsqueeze(-1) - points
+
         points_np = points.cpu().data.numpy()
         mask_np = mask.cpu().data.numpy().astype(np.bool)
+        #dir_vecs = dir_vecs.cpu().data.numpy()
         ref_img = sample_np['ref_img'].data.numpy()
         for i in range(points_np.shape[0]):
             print(np.sum(np.isnan(points_np[i])))
@@ -368,6 +387,8 @@ def filter_depth(pair_folder, scan_folder, out_folder, plyfilename):
             p_f = np.stack(p_f_list, -1)
             c_f_list = [ref_img[i, k][mask_np[i, 0]] for k in range(3)]
             c_f = np.stack(c_f_list, -1) * 255
+            #d_f_list = [dir_vecs[i, k][mask_np[i, 0]] for k in range(3)]
+            #d_f = np.stack(d_f_list, -1)
             ref_id = str(sample_np['ref_id'][i].item())
             views[ref_id] = (p_f, c_f.astype(np.uint8))
             print("processing {}, ref-view{:0>2}, photo/geo/final-mask:{}/{}/{}".format(scan_folder, int(ref_id), prob_mask[i].float().mean().item(), vis_mask[i].float().mean().item(), mask[i].float().mean().item()))
@@ -375,15 +396,31 @@ def filter_depth(pair_folder, scan_folder, out_folder, plyfilename):
     print('Write combined PCD')
     p_all, c_all = [np.concatenate([v[k] for key, v in views.items()], axis=0) for k in range(2)]
 
-    vertexs, vertex_colors = [], []
+    # pcd = o3d.geometry.PointCloud()
+    # pcd.points = o3d.utility.Vector3dVector(p_all)
+    # pcd.colors = o3d.utility.Vector3dVector(c_all)
+    # print('Estimate normal')
+    # pcd.estimate_normals()
+    # all_normals_np = np.asarray(pcd.normals)
+    # is_same_dir = (all_normals_np * d_all).sum(-1, keepdims=True) > 0
+    # all_normals_np *= is_same_dir.astype(np.float32) * 2 - 1
+    # pcd.normals = o3d.utility.Vector3dVector(all_normals_np)
+
+    # if args.downsample is not None:
+    #     print('Down sample')
+    #     pcd = pcd.voxel_down_sample(args.downsample)
+
+    #o3d.io.write_point_cloud(plyfilename, pcd, print_progress=True)
+
+    """vertexs, vertex_colors = [], []
     for i in range(len(p_all)):
         if np.sum(np.isnan(p_all[i])) == 0:
             vertexs.append(tuple(p_all[i]))
             vertex_colors.append(tuple(c_all[i]))
     vertexs = np.array(vertexs, dtype=[('x', 'f4'), ('y', 'f4'), ('z', 'f4')])
-    vertex_colors = np.array(vertex_colors, dtype=[('red', 'u1'), ('green', 'u1'), ('blue', 'u1')])
-    #vertexs = np.array([tuple(v) for v in p_all], dtype=[('x', 'f4'), ('y', 'f4'), ('z', 'f4')])
-    #vertex_colors = np.array([tuple(v) for v in c_all], dtype=[('red', 'u1'), ('green', 'u1'), ('blue', 'u1')])
+    vertex_colors = np.array(vertex_colors, dtype=[('red', 'u1'), ('green', 'u1'), ('blue', 'u1')])"""
+    vertexs = np.array([tuple(v) for v in p_all], dtype=[('x', 'f4'), ('y', 'f4'), ('z', 'f4')])
+    vertex_colors = np.array([tuple(v) for v in c_all], dtype=[('red', 'u1'), ('green', 'u1'), ('blue', 'u1')])
 
     vertex_all = np.empty(len(vertexs), vertexs.dtype.descr + vertex_colors.dtype.descr)
     for prop in vertexs.dtype.names:
@@ -449,11 +486,11 @@ if __name__ == '__main__':
 
     # step2. filter saved depth maps with photometric confidence maps and geometric constraints
 
-    # if args.filter_method != "gipuma":
-    # #     #support multi-processing, the default number of worker is 4
-    #     pcd_filter(testlist, args.num_worker)
-    # else:
-    #     prob_threshold = args.prob_threshold
-    #     prob_threshold = [float(p) for p in prob_threshold.split(',')]
-    #     gipuma_filter(testlist, args.outdir, prob_threshold, args.disp_threshold, args.num_consistent,
-    #                   args.fusibile_exe_path)
+    if args.filter_method != "gipuma":
+         #support multi-processing, the default number of worker is 4
+        pcd_filter(testlist, args.num_worker)
+    else:
+        prob_threshold = args.prob_threshold
+        prob_threshold = [float(p) for p in prob_threshold.split(',')]
+        gipuma_filter(testlist, args.outdir, prob_threshold, args.disp_threshold, args.num_consistent,
+                      args.fusibile_exe_path)

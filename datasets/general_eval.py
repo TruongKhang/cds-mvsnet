@@ -22,25 +22,7 @@ class MVSDataset(Dataset):
 
         assert self.mode == "test"
         self.metas = self.build_list()
-
-        #self.generate_img_index = []
         self.list_begin = []
-        #self.spliter = []
-        #total_imgs = 0
-        #keys = sorted(list(self.metas.keys()))
-        #for name in keys:
-        #    num_imgs = len(self.metas[name])
-        #    total_imgs += num_imgs
-            # print(name, num_imgs, seq_size)
-        #    if (self.mode == 'train') and (self.kwargs['seq_size'] is not None):
-        #        indices = np.arange(num_imgs)
-        #        for ptr in range(0, num_imgs, self.kwargs['seq_size']):
-        #            self.spliter.append((name, indices[ptr:(ptr + self.kwargs['seq_size'])]))
-        #    else:
-        #        self.spliter.append((name, np.arange(num_imgs)))
-        #print("dataset", self.mode, "metas:", total_imgs)
-
-        # self.generate_indices()
 
     def build_list(self):
         metas = [] #{}
@@ -64,27 +46,12 @@ class MVSDataset(Dataset):
                     ref_view = int(f.readline().rstrip())
                     src_views = [int(x) for x in f.readline().rstrip().split()[1::2]]
 
-                    # uncommet this to evaluate on tanks tand temples
-                    """if ref_view < (self.nviews - 1):
-                        left = 0
-                    else:
-                        left = ref_view - (self.nviews - 1)
-                    if (left + self.nviews) > num_viewpoint:
-                        left = num_viewpoint - self.nviews
-                    f.readline() # ignore the given source views
-                    src_views = [x for x in range(left, left+self.nviews) if x != ref_view]
-                    src_views = src_views[::-1]"""
-
                     # filter by no src view and fill to nviews
                     if len(src_views) > 0:
                         if len(src_views) < self.nviews:
                             print("{}< num_views:{}".format(len(src_views), self.nviews))
                             src_views += [src_views[0]] * (self.nviews - len(src_views))
                         src_views = src_views[:(self.nviews-1)]
-                        #if scan not in metas:
-                        #    metas[scan] = [(ref_view, src_views)]
-                        #else:
-                        #    metas[scan].append((ref_view, src_views))
                         metas.append((scan, ref_view, src_views, scan))
 
         self.interval_scale = interval_scale_dict
@@ -92,7 +59,7 @@ class MVSDataset(Dataset):
         return metas
 
     def __len__(self):
-        return len(self.metas) #self.generate_img_index)
+        return len(self.metas)
 
     def read_cam_file(self, filename, interval_scale):
         with open(filename) as f:
@@ -102,6 +69,8 @@ class MVSDataset(Dataset):
         extrinsics = np.fromstring(' '.join(lines[1:5]), dtype=np.float32, sep=' ').reshape((4, 4))
         # intrinsics: line [7-10), 3x3 matrix
         intrinsics = np.fromstring(' '.join(lines[7:10]), dtype=np.float32, sep=' ').reshape((3, 3))
+        if self.kwargs["dataset"] == "tt":
+            intrinsics[1, 2] += 4
         intrinsics[:2, :] /= 4.0
         # depth_min & depth_interval: line 11
         depth_min = float(lines[11].split()[0])
@@ -120,41 +89,24 @@ class MVSDataset(Dataset):
         img = Image.open(filename)
         # scale 0~255 to 0~1
         np_img = np.array(img, dtype=np.float32) / 255.
+        if self.kwargs["dataset"] == "tt":
+            np_img = np.pad(np_img, ((4, 4), (0, 0), (0, 0)), 'edge')
 
         #h, w = np_img.shape[:2]
         #np_img = cv2.resize(np_img, (w//2, h//2), interpolation=cv2.INTER_NEAREST)
 
         return np_img
 
-    def read_depth(self, filename):
-        # read pfm depth file
-        return np.array(read_pfm(filename)[0], dtype=np.float32)
-
-
-    def read_mask_hr(self, filename):
-        img = Image.open(filename)
-        np_img = np.array(img, dtype=np.float32)
-        np_img = (np_img > 10).astype(np.float32)
-        #np_img = cv2.resize(np_img, (1152, 864), interpolation=cv2.INTER_NEAREST)
-
-        h, w = np_img.shape
-        np_img_ms = {
-            "stage1": cv2.resize(np_img, (w//8, h//8), interpolation=cv2.INTER_NEAREST),
-            "stage2": cv2.resize(np_img, (w//4, h//4), interpolation=cv2.INTER_NEAREST),
-            "stage3": cv2.resize(np_img, (w//2, h//2), interpolation=cv2.INTER_NEAREST),
-            "stage4": np_img,
-        }
-        return np_img_ms
-
     def scale_mvs_input(self, img, intrinsics, max_w, max_h, base=64):
         h, w = img.shape[:2]
-        if h > max_h or w > max_w:
-            scale = 1.0 * max_h / h
-            if scale * w > max_w:
-                scale = 1.0 * max_w / w
-            new_w, new_h = scale * w // base * base, scale * h // base * base
-        else:
-            new_w, new_h = 1.0 * w // base * base, 1.0 * h // base * base
+        # if h > max_h or w > max_w:
+        #     scale = 1.0 * max_h / h
+        #     if scale * w > max_w:
+        #         scale = 1.0 * max_w / w
+        #     new_w, new_h = scale * w // base * base, scale * h // base * base
+        # else:
+        #     new_w, new_h = 1.0 * w // base * base, 1.0 * h // base * base
+        new_h, new_w = max_h, max_w
 
         scale_w = 1.0 * new_w / w
         scale_h = 1.0 * new_h / h
@@ -164,7 +116,6 @@ class MVSDataset(Dataset):
         img = cv2.resize(img, (int(new_w), int(new_h)))
 
         return img, intrinsics
-
 
     def __getitem__(self, idx):
         global s_h, s_w
@@ -234,15 +185,21 @@ class MVSDataset(Dataset):
         stage0_pjmats = proj_matrices.copy()
         stage0_pjmats[:, 1, :2, :] = proj_matrices[:, 1, :2, :] * 0.5
 
-        proj_matrices_ms = {
-            "stage1": stage0_pjmats,
-            "stage2": proj_matrices,
-            "stage3": stage2_pjmats,
-            "stage4": stage3_pjmats
-        }
+        if self.kwargs["refine"]:
+            proj_matrices_ms = {
+                "stage1": stage0_pjmats,
+                "stage2": proj_matrices,
+                "stage3": stage2_pjmats,
+                "stage4": stage3_pjmats
+            }
+        else:
+            proj_matrices_ms = {
+                "stage1": proj_matrices,
+                "stage2": stage2_pjmats,
+                "stage3": stage3_pjmats
+            }
 
         return {"imgs": imgs,
                 "proj_matrices": proj_matrices_ms,
                 "depth_values": depth_values,
-                "filename": scan + '/{}/' + '{:0>8}'.format(view_ids[0]) + "{}"} #,
-                #"is_begin": self.list_begin[idx]}
+                "filename": scan + '/{}/' + '{:0>8}'.format(view_ids[0]) + "{}"}
