@@ -130,7 +130,6 @@ dmypy.json
 .idea/
 checkpoints/
 saved/
-fusibile
 pretrains
 tt_outputs
 *outputs*
