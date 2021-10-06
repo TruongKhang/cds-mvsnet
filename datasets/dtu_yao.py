@@ -10,9 +10,9 @@ random.seed(123)
 
 
 # the DTU dataset preprocessed by Yao Yao (only for training)
-class MVSDataset(Dataset):
+class DTUMVSDataset(Dataset):
     def __init__(self, datapath, listfile, mode, nviews, ndepths=192, interval_scale=1.06, **kwargs):
-        super(MVSDataset, self).__init__()
+        super(DTUMVSDataset, self).__init__()
         self.datapath = datapath
         self.listfile = listfile
         self.mode = mode
@@ -25,27 +25,8 @@ class MVSDataset(Dataset):
         assert self.mode in ["train", "val", "test"]
         self.metas = self.build_list()
 
-        self.generate_img_index = []
-        self.list_begin = []
-        self.spliter = []
-        total_imgs = 0
-        keys = sorted(list(self.metas.keys()))
-        for name in keys:
-            num_imgs = len(self.metas[name])
-            total_imgs += num_imgs
-            # print(name, num_imgs, seq_size)
-            if (self.mode == 'train') and (self.kwargs['seq_size'] is not None):
-                indices = np.arange(num_imgs)
-                for ptr in range(0, num_imgs, self.kwargs['seq_size']):
-                    self.spliter.append((name, indices[ptr:(ptr + self.kwargs['seq_size'])]))
-            else:
-                self.spliter.append((name, np.arange(num_imgs)))
-        print("dataset", self.mode, "metas:", total_imgs)
-
-        self.generate_indices()
-
     def build_list(self):
-        metas = {}
+        metas = []
         with open(self.listfile) as f:
             scans = f.readlines()
             scans = [line.rstrip() for line in scans]
@@ -71,20 +52,18 @@ class MVSDataset(Dataset):
                     # f.readline() # ignore the given source views
                     # src_views = [x for x in range(left, left+self.nviews) if x != ref_view]
                     # light conditions 0-6
-                    # for light_idx in range(7):
-                    #     metas.append((scan, light_idx, ref_view, src_views))
-                    for light_idx in range(7):
-                        key = '%s_%s' % (scan, light_idx)
-                        if key not in metas:
-                            metas[key] = [(ref_view, src_views)]
-                        else:
-                            metas[key].append((ref_view, src_views))
-        # print("dataset", self.mode, "metas:", len(metas))
+                    if self.mode == 'train':
+                        lights = np.random.choice(np.arange(7), 4, replace=False)
+                    else:
+                        lights = np.arange(7)
+                    for light_idx in lights:
+                        metas.append((scan, light_idx, ref_view, src_views))
+        print("dataset", self.mode, "metas:", len(metas))
         return metas
 
     def __len__(self):
-        return len(self.generate_img_index)
-        # return len(self.metas)
+        # return len(self.generate_img_index)
+        return len(self.metas)
 
     def read_cam_file(self, filename):
         with open(filename) as f:
@@ -130,9 +109,10 @@ class MVSDataset(Dataset):
 
         h, w = np_img.shape
         np_img_ms = {
-            "stage1": cv2.resize(np_img, (w//4, h//4), interpolation=cv2.INTER_NEAREST),
-            "stage2": cv2.resize(np_img, (w//2, h//2), interpolation=cv2.INTER_NEAREST),
-            "stage3": np_img,
+            "stage1": cv2.resize(np_img, (w//8, h//8), interpolation=cv2.INTER_NEAREST),
+            "stage2": cv2.resize(np_img, (w//4, h//4), interpolation=cv2.INTER_NEAREST),
+            "stage3": cv2.resize(np_img, (w//2, h//2), interpolation=cv2.INTER_NEAREST),
+            "stage4": np_img,
         }
         return np_img_ms
 
@@ -148,63 +128,21 @@ class MVSDataset(Dataset):
 
         h, w = depth_lr.shape
         depth_lr_ms = {
-            "stage1": cv2.resize(depth_lr, (w//4, h//4), interpolation=cv2.INTER_NEAREST),
-            "stage2": cv2.resize(depth_lr, (w//2, h//2), interpolation=cv2.INTER_NEAREST),
-            "stage3": depth_lr,
+            "stage1": cv2.resize(depth_lr, (w//8, h//8), interpolation=cv2.INTER_NEAREST),
+            "stage2": cv2.resize(depth_lr, (w//4, h//4), interpolation=cv2.INTER_NEAREST),
+            "stage3": cv2.resize(depth_lr, (w//2, h//2), interpolation=cv2.INTER_NEAREST),
+            "stage4": depth_lr,
         }
         return depth_lr_ms
 
-    def generate_indices(self):
-        self.generate_img_index = []
-        self.list_begin = []
-        batch_size = self.kwargs['batch_size']
-
-        if self.kwargs['shuffle']:
-            random.shuffle(self.spliter)
-
-        if self.mode == 'train':
-            idx = batch_size - 1
-            batch_ptrs = list(range(batch_size))
-            id_ptrs = np.zeros(batch_size, dtype=np.uint8)
-            while idx < len(self.spliter):
-                for i in range(len(batch_ptrs)):
-                    if id_ptrs[i] == 0:
-                        self.list_begin.append(True)
-                    else:
-                        self.list_begin.append(False)
-                    name, id_data = self.spliter[batch_ptrs[i]]
-                    self.generate_img_index.append((name, id_data[id_ptrs[i]]))
-                    id_ptrs[i] += 1
-                    if id_ptrs[i] >= len(id_data):
-                        idx += 1
-                        batch_ptrs[i] = idx
-                        id_ptrs[i] = 0
-                    if idx >= len(self.spliter):
-                        if i < len(batch_ptrs) - 1:
-                            self.generate_img_index = self.generate_img_index[:-(i + 1)]
-                            self.list_begin = self.list_begin[:-(i + 1)]
-                        break
-        else:
-            for ptr in range(len(self.spliter)):
-                name, indices = self.spliter[ptr]
-                for i, idx in enumerate(indices):
-                    self.generate_img_index.append((name, idx))
-                    if i == 0:
-                        self.list_begin.append(True)
-                    else:
-                        self.list_begin.append(False)
-
-        # print("Number samples of %s dataset: " % self.mode, len(self.generate_img_index))
-
     def __getitem__(self, idx):
-        # meta = self.metas[idx]
-        # scan, light_idx, ref_view, src_views = meta
-        key, real_idx = self.generate_img_index[idx]
-        scan, light_idx = key.split('_')[0], int(key.split('_')[1])
-        ref_view, src_views = self.metas[key][real_idx]
-        # use only the reference view and first nviews-1 source views
-
-        view_ids = [ref_view] + src_views
+        meta = self.metas[idx]
+        scan, light_idx, ref_view, src_views = meta
+        if self.mode == 'train':
+            src_views = src_views[:7]
+            np.random.shuffle(src_views)
+        view_ids = [ref_view] + src_views[:(self.nviews-1)]
+        # view_ids = [ref_view] + src_views
 
         imgs = []
         mask = None
@@ -252,15 +190,19 @@ class MVSDataset(Dataset):
         stage3_pjmats = proj_matrices.copy()
         stage3_pjmats[:, 1, :2, :] = proj_matrices[:, 1, :2, :] * 4
 
+        stage0_pjmats = proj_matrices.copy()
+        stage0_pjmats[:, 1, :2, :] = proj_matrices[:, 1, :2, :] * 0.5
+
         proj_matrices_ms = {
-            "stage1": proj_matrices,
-            "stage2": stage2_pjmats,
-            "stage3": stage3_pjmats
+            "stage1": stage0_pjmats,
+            "stage2": proj_matrices,
+            "stage3": stage2_pjmats,
+            "stage4": stage3_pjmats
         }
 
         return {"imgs": imgs,
                 "proj_matrices": proj_matrices_ms,
                 "depth": depth_ms,
                 "depth_values": depth_values,
-                "mask": mask,
-                "is_begin": self.list_begin[idx]}
+                "mask": mask} #,
+                #"is_begin": self.list_begin[idx]}

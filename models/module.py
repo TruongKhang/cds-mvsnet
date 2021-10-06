@@ -7,7 +7,7 @@ import sys
 sys.path.append("..")
 # from utils import local_pcd
 
-from .dynamic_conv import DynamicConv
+from models.dynamic_conv import DynamicConv
 
 
 def init_bn(module):
@@ -57,29 +57,31 @@ class Conv2d(nn.Module):
         super(Conv2d, self).__init__()
 
         if dynamic:
-            self.conv = DynamicConv(in_channels, out_channels, size_kernels=(3,5,7,9), stride=stride, bias=(not bn), **kwargs)
+            self.conv = DynamicConv(in_channels, out_channels, size_kernels=kernel_size, stride=stride, bias=(not bn), **kwargs)
         else:
             self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, stride=stride, bias=(not bn), **kwargs)
         self.dynamic = dynamic
         self.kernel_size = kernel_size
         self.stride = stride
-        self.bn = nn.BatchNorm2d(out_channels, momentum=bn_momentum) if bn else None
+        self.bn = nn.InstanceNorm2d(out_channels, momentum=bn_momentum) if bn else None
         self.relu = relu
 
         # assert init_method in ["kaiming", "xavier"]
         # self.init_weights(init_method)
 
-    def forward(self, x):
+    def forward(self, x, epipole=None, temperature=0.001):
         if self.dynamic:
-            feat, epipole = x
-            x = self.conv(feat, epipole=epipole)
+            #feat, epipole, temperature = x
+            y, norm_curv = self.conv(x, epipole=epipole, temperature=temperature)
         else:
-            x = self.conv(x)
+            y = self.conv(x)
+        # y = self.conv(x)
         if self.bn is not None:
-            x = self.bn(x)
+            y = self.bn(y)
         if self.relu:
-            x = F.relu(x, inplace=True)
-        return x
+            y = F.leaky_relu(y, 0.1, inplace=True)
+        out = (y, norm_curv) if self.dynamic else y
+        return out
 
     def init_weights(self, init_method):
         """default initialization"""
@@ -224,150 +226,126 @@ class Deconv3d(nn.Module):
             init_bn(self.bn)
 
 
-class DeConv2dFuse(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size, relu=True, bn=True,
-                 bn_momentum=0.1):
-        super(DeConv2dFuse, self).__init__()
+class ConvBnReLU(nn.Module):
+    """Implements 2d Convolution + batch normalization + ReLU"""
 
-        self.deconv = Deconv2d(in_channels, out_channels, kernel_size, stride=2, padding=1, output_padding=1,
-                               bn=True, relu=relu, bn_momentum=bn_momentum)
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        kernel_size: int = 3,
+        stride: int = 1,
+        pad: int = 1,
+        dilation: int = 1,
+    ) -> None:
+        """initialization method for convolution2D + batch normalization + relu module
+        Args:
+            in_channels: input channel number of convolution layer
+            out_channels: output channel number of convolution layer
+            kernel_size: kernel size of convolution layer
+            stride: stride of convolution layer
+            pad: pad of convolution layer
+            dilation: dilation of convolution layer
+        """
+        super(ConvBnReLU, self).__init__()
+        self.conv = nn.Conv2d(
+            in_channels, out_channels, kernel_size, stride=stride, padding=pad, dilation=dilation, bias=False
+        )
+        self.bn = nn.BatchNorm2d(out_channels)
 
-        self.conv = Conv2d(2*out_channels, out_channels, kernel_size, stride=1, padding=1,
-                           bn=bn, relu=relu, bn_momentum=bn_momentum, dynamic=False)
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """forward method"""
+        return F.relu(self.bn(self.conv(x)), inplace=True)
 
-        # assert init_method in ["kaiming", "xavier"]
-        # self.init_weights(init_method)
-
-    def forward(self, x_pre, x):
-        x = self.deconv(x)
-        x = torch.cat((x, x_pre), dim=1)
-        x = self.conv(x)
-        return x
-
-
-# class FeatureNet(nn.Module):
-#     def __init__(self, base_channels, num_stage=3, stride=4, arch_mode="unet"):
-#         super(FeatureNet, self).__init__()
-#         assert arch_mode in ["unet", "fpn"], print("mode must be in 'unet' or 'fpn', but get:{}".format(arch_mode))
-#         print("*************feature extraction arch mode:{}****************".format(arch_mode))
-#         self.arch_mode = arch_mode
-#         self.stride = stride
-#         self.base_channels = base_channels
-#         self.num_stage = num_stage
-#
-#         self.conv0 = nn.Sequential(
-#             Conv2d(3, base_channels, 3, 1, padding=1, dynamic=True),
-#             Conv2d(base_channels, base_channels, 3, 1, padding=1, dynamic=True),
-#         )
-#
-#         self.conv1 = nn.Sequential(
-#             Conv2d(base_channels, base_channels * 2, 5, stride=2, padding=2, dynamic=True),
-#             Conv2d(base_channels * 2, base_channels * 2, 3, 1, padding=1, dynamic=True),
-#             Conv2d(base_channels * 2, base_channels * 2, 3, 1, padding=1, dynamic=True),
-#         )
-#
-#         self.conv2 = nn.Sequential(
-#             Conv2d(base_channels * 2, base_channels * 4, 5, stride=2, padding=2, dynamic=True),
-#             Conv2d(base_channels * 4, base_channels * 4, 3, 1, padding=1, dynamic=True),
-#             Conv2d(base_channels * 4, base_channels * 4, 3, 1, padding=1, dynamic=True),
-#         )
-#
-#         self.out1 = nn.Conv2d(base_channels * 4, base_channels * 4, 1, bias=False)
-#         self.out_channels = [4 * base_channels]
-#
-#         if self.arch_mode == 'unet':
-#             if num_stage == 3:
-#                 self.deconv1 = DeConv2dFuse(base_channels * 4, base_channels * 2, 3)
-#                 self.deconv2 = DeConv2dFuse(base_channels * 2, base_channels, 3)
-#
-#                 self.out2 = nn.Conv2d(base_channels * 2, base_channels * 2, 1, bias=False)
-#                 self.out3 = nn.Conv2d(base_channels, base_channels, 1, bias=False)
-#                 self.out_channels.append(2 * base_channels)
-#                 self.out_channels.append(base_channels)
-#
-#             elif num_stage == 2:
-#                 self.deconv1 = DeConv2dFuse(base_channels * 4, base_channels * 2, 3)
-#
-#                 self.out2 = nn.Conv2d(base_channels * 2, base_channels * 2, 1, bias=False)
-#                 self.out_channels.append(2 * base_channels)
-#         elif self.arch_mode == "fpn":
-#             final_chs = base_channels * 4
-#             if num_stage == 3:
-#                 self.inner1 = nn.Conv2d(base_channels * 2, final_chs, 1, bias=True)
-#                 self.inner2 = nn.Conv2d(base_channels * 1, final_chs, 1, bias=True)
-#
-#                 self.out2 = nn.Conv2d(final_chs, base_channels * 2, 3, padding=1, bias=False)
-#                 self.out3 = nn.Conv2d(final_chs, base_channels, 3, padding=1, bias=False)
-#                 self.out_channels.append(base_channels * 2)
-#                 self.out_channels.append(base_channels)
-#
-#             elif num_stage == 2:
-#                 self.inner1 = nn.Conv2d(base_channels * 2, final_chs, 1, bias=True)
-#
-#                 self.out2 = nn.Conv2d(final_chs, base_channels, 3, padding=1, bias=False)
-#                 self.out_channels.append(base_channels)
-#
-#     def forward(self, x, epipole=None):
-#         conv0 = self.conv0(x, epipole=epipole)
-#         conv1 = self.conv1(conv0, epipole=epipole)
-#         conv2 = self.conv2(conv1, epipole=epipole)
-#
-#         intra_feat = conv2
-#         outputs = {}
-#         out = self.out1(intra_feat)
-#         outputs["stage1"] = out
-#         if self.arch_mode == "unet":
-#             if self.num_stage == 3:
-#                 intra_feat = self.deconv1(conv1, intra_feat)
-#                 out = self.out2(intra_feat)
-#                 outputs["stage2"] = out
-#
-#                 intra_feat = self.deconv2(conv0, intra_feat)
-#                 out = self.out3(intra_feat)
-#                 outputs["stage3"] = out
-#
-#             elif self.num_stage == 2:
-#                 intra_feat = self.deconv1(conv1, intra_feat)
-#                 out = self.out2(intra_feat)
-#                 outputs["stage2"] = out
-#
-#         elif self.arch_mode == "fpn":
-#             if self.num_stage == 3:
-#                 intra_feat = F.interpolate(intra_feat, scale_factor=2, mode="nearest") + self.inner1(conv1)
-#                 out = self.out2(intra_feat)
-#                 outputs["stage2"] = out
-#
-#                 intra_feat = F.interpolate(intra_feat, scale_factor=2, mode="nearest") + self.inner2(conv0)
-#                 out = self.out3(intra_feat)
-#                 outputs["stage3"] = out
-#
-#             elif self.num_stage == 2:
-#                 intra_feat = F.interpolate(intra_feat, scale_factor=2, mode="nearest") + self.inner1(conv1)
-#                 out = self.out2(intra_feat)
-#                 outputs["stage2"] = out
-#
-#         return outputs
 
 class FeatureNet(nn.Module):
-    def __init__(self, base_channels, arch_mode="unet"):
+    def __init__(self, base_channels, num_stage=3, stride=4, arch_mode="unet"):
         super(FeatureNet, self).__init__()
         assert arch_mode in ["unet", "fpn"], print("mode must be in 'unet' or 'fpn', but get:{}".format(arch_mode))
         print("*************feature extraction arch mode:{}****************".format(arch_mode))
         self.arch_mode = arch_mode
+        self.stride = stride
         self.base_channels = base_channels
+        self.num_stage = num_stage
 
-        convs = [Conv2d(3, base_channels, 3, 1, padding=1, dynamic=True, bn=False)]
-        for _ in range(4):
-            convs.append(Conv2d(base_channels, base_channels, 3, 1, padding=1, dynamic=True, bn=False))
-        self.convs = nn.ModuleList(convs)
-        self.out = nn.Conv2d(base_channels, base_channels, 1, bias=False)
-        self.out_channels = base_channels
+        self.conv00 = Conv2d(3, base_channels, (3, 7, 11), 1, dynamic=True)
+        self.conv01 = Conv2d(base_channels, base_channels, (3, 5, 7), 1, dynamic=True)
 
-    def forward(self, x, epipole=None):
-        for conv in self.convs:
-            x = conv((x, epipole))
-        out = self.out(x)
-        return out
+        self.downsample1 = Conv2d(base_channels, base_channels*2, 3, stride=2, padding=1)
+        self.conv10 = Conv2d(base_channels*2, base_channels*2, (3, 5), 1, dynamic=True)
+        self.conv11 = Conv2d(base_channels*2, base_channels*2, (3, 5), 1, dynamic=True)
+
+        self.downsample2 = Conv2d(base_channels*2, base_channels*4, 3, stride=2, padding=1)
+        self.conv20 = Conv2d(base_channels*4, base_channels*4, (1, 3), 1, dynamic=True)
+        self.conv21 = Conv2d(base_channels*4, base_channels*4, (1, 3), 1, dynamic=True)
+
+        self.out1 = DynamicConv(base_channels*4, base_channels*4, size_kernels=(1, 3))
+        self.act1 = nn.Sequential(nn.InstanceNorm2d(base_channels*4), nn.Tanh())
+        self.out_channels = [base_channels*4]
+
+        self.inner1 = Conv2d(base_channels * 6, base_channels * 2, 1) #nn.Sequential(nn.Conv2d(base_channels * 6, base_channels*2, 1, bias=True), nn.ReLU(inplace=True))
+        self.inner2 = Conv2d(base_channels * 3, base_channels, 1) #nn.Sequential(nn.Conv2d(base_channels * 3, base_channels, 1, bias=True), nn.ReLU(inplace=True))
+
+        self.out2 = DynamicConv(base_channels*2, base_channels*2, size_kernels=(1, 3))  # nn.Conv2d(final_chs, base_channels * 2, 3, padding=1, bias=False)
+        self.act2 = nn.Sequential(nn.InstanceNorm2d(base_channels*2), nn.Tanh())
+        self.out3 = DynamicConv(base_channels, base_channels, size_kernels=(1, 3))  # nn.Conv2d(final_chs, base_channels, 3, padding=1, bias=False)
+        self.act3 = nn.Sequential(nn.InstanceNorm2d(base_channels), nn.Tanh())
+        self.out_channels.append(base_channels*2)
+        self.out_channels.append(base_channels)
+
+    def forward(self, x, epipole=None, temperature=0.001):
+        conv00, nc00 = self.conv00(x, epipole, temperature)
+        conv01, nc01 = self.conv01(conv00, epipole, temperature)
+        down_conv0, down_epipole0 = self.downsample1(conv01), epipole / 2
+        conv10, nc10 = self.conv10(down_conv0, down_epipole0, temperature)
+        conv11, nc11 = self.conv11(conv10, down_epipole0, temperature)
+        down_conv1, down_epipole1 = self.downsample2(conv11), epipole / 4
+        conv20, nc20 = self.conv20(down_conv1, down_epipole1, temperature)
+        conv21, nc21 = self.conv21(conv20, down_epipole1, temperature)
+
+        intra_feat = conv21
+        outputs = {}
+        out, nc22 = self.out1(intra_feat, epipole=down_epipole1, temperature=temperature)
+        out = self.act1(out)
+        nc_sum = (nc20 ** 2 + nc21**2 + nc22 ** 2) / 3
+        outputs["stage1"] = out, nc_sum, nc22.abs()
+
+        intra_feat = torch.cat((F.interpolate(intra_feat, scale_factor=2, mode="nearest"), conv11), dim=1)
+        intra_feat = self.inner1(intra_feat)
+        out, nc12 = self.out2(intra_feat, epipole=down_epipole0, temperature=temperature)
+        out = self.act2(out)
+        nc_sum = (nc10 ** 2 + nc11 ** 2 + nc12 ** 2) / 3
+        outputs["stage2"] = out, nc_sum, nc12.abs()
+
+        intra_feat = torch.cat((F.interpolate(out, scale_factor=2, mode="nearest"), conv01), dim=1)
+        intra_feat = self.inner2(intra_feat)
+        out, nc02 = self.out3(intra_feat, epipole=epipole, temperature=temperature)
+        out = self.act3(out)
+        nc_sum = (nc00 ** 2 + nc01 ** 2 + nc02 ** 2) / 3
+        outputs["stage3"] = out, nc_sum, nc02.abs()
+
+        return outputs
+
+# class FeatureNet(nn.Module):
+#     def __init__(self, base_channels, arch_mode="unet"):
+#         super(FeatureNet, self).__init__()
+#         assert arch_mode in ["unet", "fpn"], print("mode must be in 'unet' or 'fpn', but get:{}".format(arch_mode))
+#         print("*************feature extraction arch mode:{}****************".format(arch_mode))
+#         self.arch_mode = arch_mode
+#         self.base_channels = base_channels
+#
+#         convs = [Conv2d(3, base_channels, 3, 1, padding=1, dynamic=True)]
+#         for _ in range(4):
+#             convs.append(Conv2d(base_channels, base_channels, 3, 1, padding=1, dynamic=True))
+#         self.convs = nn.ModuleList(convs)
+#         self.out = nn.Conv2d(base_channels, base_channels, 1, bias=False)
+#         self.out_channels = base_channels
+#
+#     def forward(self, x, epipole=None):
+#         for conv in self.convs:
+#             x = conv((x, epipole))
+#         out = self.out(x)
+#         return out
 
 
 class CostRegNet(nn.Module):
@@ -418,37 +396,70 @@ class CostRegNet(nn.Module):
         return x
 
 
-class RefineNet(nn.Module):
-    def __init__(self, in_c):
-        super(RefineNet, self).__init__()
-        self.feature_extractor = nn.Sequential(Conv2d(in_c, 64, 3, bn=False, padding=1), #UNet(3, 32, 32, 3, batchnorms=False)
-                                               Conv2d(64, 32, 3, bn=False, padding=1),
-                                               Conv2d(32, 32, 3, bn=False, padding=1),
-                                               #Conv2d(32, 32, 3, bn=False, padding=1),
-                                               Conv2d(32, 32, 3, bn=False, padding=1))
-        self.depth_prediction = nn.Sequential(Conv2d(32, 32, 3, bn=False, padding=1),
-                                              Conv2d(32, 32, 3, bn=False, padding=1),
-                                              #Conv2d(32, 32, 3, bn=False, padding=1),
-                                              nn.Conv2d(32, 1, 1))
-        self.conf_prediction = nn.Sequential(Conv2d(33, 64, 3, bn=False, padding=1),
-                                             Conv2d(64, 32, 3, bn=False, padding=1),
-                                             #Conv2d(32, 32, 3, bn=False, padding=1),
-                                             nn.Conv2d(32, 1, 1),
-                                             nn.Softplus())
+class Refinement(nn.Module):
+    """Depth map refinement network"""
 
-    def forward(self, init_depth, stage_idx, prior, feat_img=None):
-        prior_depth, prior_conf = prior
-        inputs = torch.cat((feat_img, prior_depth, init_depth, prior_depth - init_depth, prior_conf), dim=1)
-        latent_feat = self.feature_extractor(inputs)
+    def __init__(self):
+        """Initialize"""
 
-        depth_residual = self.depth_prediction(latent_feat)
-        final_depth = init_depth + depth_residual
-        final_conf = None
-        if stage_idx == 2:
-            input_feat = torch.cat((latent_feat, depth_residual), dim=1).detach()
-            final_conf = self.conf_prediction(input_feat)
-            final_conf = final_conf.squeeze(1)
-        return final_depth.squeeze(1), final_conf
+        super(Refinement, self).__init__()
+
+        # img: [B,3,H,W]
+        #self.conv0 = nn.Sequential(ConvBnReLU(in_channels=3, out_channels=8),
+        #                           ConvBnReLU(in_channels=8, out_channels=8),
+        #                           ConvBnReLU(in_channels=8, out_channels=8))
+        self.conv0 = ConvBnReLU(in_channels=3, out_channels=8)
+        # depth map:[B,1,H/2,W/2]
+        #self.conv1 = nn.Sequential(nn.Conv2d(1, 8, 3, padding=1), nn.ReLU(inplace=True))
+        self.conv1 = ConvBnReLU(in_channels=1, out_channels=8)
+        #self.conv2 = nn.Sequential(nn.Conv2d(8, 8, 3, padding=1), nn.ReLU(inplace=True))
+        self.conv2 = ConvBnReLU(in_channels=8, out_channels=8)
+        self.deconv = nn.ConvTranspose2d(
+            in_channels=8, out_channels=8, kernel_size=3, padding=1, output_padding=1, stride=2, bias=False
+        )
+
+        self.bn = nn.BatchNorm2d(8)
+        self.conv3 = ConvBnReLU(in_channels=16, out_channels=8)
+                                   #ConvBnReLU(in_channels=8, out_channels=8),
+                                   #ConvBnReLU(in_channels=8, out_channels=8))
+        #self.conv3 = nn.Sequential(nn.Conv2d(8, 8, 3, padding=1), nn.ReLU(inplace=True),
+        #                           nn.Conv2d(8, 8, 3, padding=1), nn.ReLU(inplace=True),
+        #                           nn.Conv2d(8, 8, 3, padding=1), nn.ReLU(inplace=True))
+        self.res = nn.Conv2d(in_channels=8, out_channels=1, kernel_size=3, padding=1, bias=False)
+
+    def forward(
+        self, img: torch.Tensor, depth_0: torch.Tensor, depth_min: torch.Tensor, depth_max: torch.Tensor
+    ) -> torch.Tensor:
+        """Forward method
+        Args:
+            img: input reference images (B, 3, H, W)
+            depth_0: current depth map (B, 1, H//2, W//2)
+            depth_min: pre-defined minimum depth (B, )
+            depth_max: pre-defined maximum depth (B, )
+        Returns:
+            depth: refined depth map (B, 1, H, W)
+        """
+
+        batch_size = depth_min.size()[0]
+        # pre-scale the depth map into [0,1]
+        depth = (depth_0 - depth_min.view(batch_size, 1, 1, 1)) / (
+            depth_max.view(batch_size, 1, 1, 1) - depth_min.view(batch_size, 1, 1, 1)) * 10
+
+        conv0 = self.conv0(img)
+        #deconv = F.relu(self.deconv(self.conv2(self.conv1(depth))), inplace=True)
+        deconv = F.relu(self.bn(self.deconv(self.conv2(self.conv1(depth)))), inplace=True)
+        cat = torch.cat((deconv, conv0), dim=1)
+        del deconv, conv0
+        # depth residual
+        res = self.res(self.conv3(cat))
+        del cat
+
+        depth = (F.interpolate(depth, scale_factor=2, mode="bilinear", align_corners=True) + res) / 10
+        # convert the normalized depth back
+        depth = depth * (depth_max.view(batch_size, 1, 1, 1) - depth_min.view(batch_size, 1, 1, 1)) + depth_min.view(batch_size, 1, 1, 1)
+
+        return depth
+
 
 
 def depth_regression(p, depth_values):
@@ -472,7 +483,7 @@ def conf_regression(p, n=4):
     return conf.squeeze(1)
 
 
-def get_cur_depth_range_samples(cur_depth, ndepth, depth_inteval_pixel, shape, max_depth=192.0, min_depth=0.0):
+def get_cur_depth_range_samples(cur_depth, ndepth, depth_inteval_pixel, shape, max_depth=1000.0, min_depth=0.0):
     #shape, (B, H, W)
     #cur_depth: (B, H, W)
     #return depth_range_values: (B, D, H, W)
@@ -491,11 +502,15 @@ def get_cur_depth_range_samples(cur_depth, ndepth, depth_inteval_pixel, shape, m
                                                                   requires_grad=False).reshape(1, -1, 1,
                                                                                                1) * new_interval.unsqueeze(1))
 
-    return depth_range_samples.clamp(min=min_depth, max=max_depth)
+    delta = (depth_range_samples - min_depth).clamp(min=0)
+    depth_range_samples = min_depth + delta
+    delta = (depth_range_samples - max_depth).clamp(max=0)
+    depth_range_samples = max_depth + delta
+    return depth_range_samples #.clamp(min=min_depth, max=max_depth)
 
 
 def get_depth_range_samples(cur_depth, ndepth, depth_inteval_pixel, device, dtype, shape,
-                           max_depth=192.0, min_depth=0.0):
+                           max_depth=1000.0, min_depth=0.0):
     #shape: (B, H, W)
     #cur_depth: (B, H, W) or (B, D)
     #return depth_range_samples: (B, D, H, W)
@@ -576,16 +591,7 @@ if __name__ == "__main__":
     #     img_add = cv2.addWeighted(ref_img_np, alpha, img_np, beta, gamma)
     #     cv2.imwrite('../tmp/tmp{}.png'.format(i), np.hstack([ref_img_np, img_np, img_add])) #* ratio + img_np*(1-ratio)]))
 
-    # generator = GenerationNet(5, 8)
-    # generator.cuda()
-    # img = torch.rand(2, 3, 480, 640).cuda()
-    # prior_depth = torch.rand(2, 1, 480, 640).cuda()
-    # conf = (prior_depth > 0.5).float().cuda()
-    # gt_depth = torch.rand(2, 1, 480, 640).cuda()
-    # gt_conf = (gt_depth > 0.5).float().cuda()
-    # generator(img, prior_depth, conf, gt_depth, gt_conf)
-    # costvol, kl = generator.elbo() #generator.reconstruct()
-    #
-    # print(costvol.size(), kl)
+    feature_net = FeatureNet(8).to(torch.device('cuda'))
+    out = feature_net(torch.rand(2, 3, 512, 640).float().cuda(), torch.rand(2, 2).float().cuda())
 
-    pass
+    # pass

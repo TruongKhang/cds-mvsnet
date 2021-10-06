@@ -163,7 +163,15 @@ def probability_filter(dense_folder, prob_threshold):
 
         depth_map, _ = read_pfm(init_depth_map_path)
         prob_map, _ = read_pfm(prob_map_path)
-        depth_map[prob_map < prob_threshold] = 0
+
+        mask = None
+        for i, p in enumerate(prob_threshold):
+            if mask is None:
+                mask = (prob_map[:, :, i] > p)
+            else:
+                mask = mask & (prob_map[:, :, i] > p)
+        #depth_map[prob_map < prob_threshold] = 0
+        depth_map[~mask] = 0
         save_pfm(out_depth_map_path, depth_map)
 
 

@@ -1,6 +1,6 @@
 {
     "name": "TAMVS",
-    "n_gpu": 1,
+    "n_gpu": 2,
 
     "arch": {
         "type": "TAMVSNet",
@@ -16,17 +16,32 @@
     "data_loader": [
       {
         "type": "DTULoader",
-        "args":{
-            "data_path": "/mnt/sdb/khang/dtu_dataset/train",
-            "train_data_list": "lists/dtu/train.txt",
-            "val_data_list": "lists/dtu/val.txt",
-            "mode": "train",
-            "num_srcs": 3,
-            "num_depths": 192,
-            "interval_scale": 1.06,
-            "shuffle": true,
-            "seq_size": 7,
-            "batch_size": 8
+        "args": {
+          "data_path": "/mnt/sdb/khang/dtu_dataset/train",
+          "train_data_list": "lists/dtu/train.txt",
+          "val_data_list": "lists/dtu/val.txt",
+          "mode": "train",
+          "num_srcs": 3,
+          "num_depths": 192,
+          "interval_scale": 1.06,
+          "shuffle": true,
+          "seq_size": 7,
+          "batch_size": 6
+        }
+      },
+      {
+        "type": "BlendedLoader",
+        "args": {
+          "data_path": "/mnt/sdb/khang/blendedmvs",
+          "train_data_list": "lists/blended/training_list.txt",
+          "val_data_list": "lists/blended/validation_list.txt",
+          "mode": "train",
+          "num_srcs": 3,
+          "num_depths": 192,
+          "interval_scale": 1.0,
+          "shuffle": true,
+          "seq_size": 7,
+          "batch_size": 6
         }
       }
     ],
@@ -34,7 +49,7 @@
         "type": "SGD",
         "args":{
             "lr": 0.01,
-            "weight_decay": 0.001
+            "weight_decay": 0.01
         }
     },
     "loss": "final_loss",
@@ -58,7 +73,7 @@
         "early_stop": 20,
         "tensorboard": false,
         "depth_scale": 1.0,
-        "lrepochs": "10,15,20:2",
+        "lrepochs": "5,10,15:2",
         "dlossw": [0.5, 1.0, 2.0],
         "eval_freq": 1
     }

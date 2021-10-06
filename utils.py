@@ -125,6 +125,10 @@ class DictAverageMeter(object):
     def mean(self):
         return {k: v / self.count for k, v in self.data.items()}
 
+    def reset(self):
+        self.data = {}
+        self.count = 0
+
 
 # a wrapper to compute metrics for each image individually
 def compute_metrics_for_each_image(metric_func):
