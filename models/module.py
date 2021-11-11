@@ -268,27 +268,27 @@ class FeatureNet(nn.Module):
         self.base_channels = base_channels
         self.num_stage = num_stage
 
-        self.conv00 = Conv2d(3, base_channels, (3, 7, 11), 1, dynamic=True)
-        self.conv01 = Conv2d(base_channels, base_channels, (3, 5, 7), 1, dynamic=True)
+        self.conv00 = Conv2d(3, base_channels, (3, 7, 11), 1, dynamic=True, auto_selection=True)
+        self.conv01 = Conv2d(base_channels, base_channels, (3, 5, 7), 1, dynamic=True, auto_selection=True)
 
         self.downsample1 = Conv2d(base_channels, base_channels*2, 3, stride=2, padding=1)
-        self.conv10 = Conv2d(base_channels*2, base_channels*2, (3, 5), 1, dynamic=True)
-        self.conv11 = Conv2d(base_channels*2, base_channels*2, (3, 5), 1, dynamic=True)
+        self.conv10 = Conv2d(base_channels*2, base_channels*2, (3, 5), 1, dynamic=True, auto_selection=True)
+        self.conv11 = Conv2d(base_channels*2, base_channels*2, (3, 5), 1, dynamic=True, auto_selection=True)
 
         self.downsample2 = Conv2d(base_channels*2, base_channels*4, 3, stride=2, padding=1)
-        self.conv20 = Conv2d(base_channels*4, base_channels*4, (1, 3), 1, dynamic=True)
-        self.conv21 = Conv2d(base_channels*4, base_channels*4, (1, 3), 1, dynamic=True)
+        self.conv20 = Conv2d(base_channels*4, base_channels*4, (1, 3), 1, dynamic=True, auto_selection=True)
+        self.conv21 = Conv2d(base_channels*4, base_channels*4, (1, 3), 1, dynamic=True, auto_selection=True)
 
-        self.out1 = DynamicConv(base_channels*4, base_channels*4, size_kernels=(1, 3))
+        self.out1 = DynamicConv(base_channels*4, base_channels*4, size_kernels=(1, 3), auto_selection=True)
         self.act1 = nn.Sequential(nn.InstanceNorm2d(base_channels*4), nn.Tanh())
         self.out_channels = [base_channels*4]
 
-        self.inner1 = Conv2d(base_channels * 6, base_channels * 2, 1) #nn.Sequential(nn.Conv2d(base_channels * 6, base_channels*2, 1, bias=True), nn.ReLU(inplace=True))
-        self.inner2 = Conv2d(base_channels * 3, base_channels, 1) #nn.Sequential(nn.Conv2d(base_channels * 3, base_channels, 1, bias=True), nn.ReLU(inplace=True))
+        self.inner1 = Conv2d(base_channels * 6, base_channels * 2, 1)
+        self.inner2 = Conv2d(base_channels * 3, base_channels, 1)
 
-        self.out2 = DynamicConv(base_channels*2, base_channels*2, size_kernels=(1, 3))  # nn.Conv2d(final_chs, base_channels * 2, 3, padding=1, bias=False)
+        self.out2 = DynamicConv(base_channels*2, base_channels*2, size_kernels=(1, 3), auto_selection=True)
         self.act2 = nn.Sequential(nn.InstanceNorm2d(base_channels*2), nn.Tanh())
-        self.out3 = DynamicConv(base_channels, base_channels, size_kernels=(1, 3))  # nn.Conv2d(final_chs, base_channels, 3, padding=1, bias=False)
+        self.out3 = DynamicConv(base_channels, base_channels, size_kernels=(1, 3), auto_selection=True)
         self.act3 = nn.Sequential(nn.InstanceNorm2d(base_channels), nn.Tanh())
         self.out_channels.append(base_channels*2)
         self.out_channels.append(base_channels)
@@ -325,27 +325,6 @@ class FeatureNet(nn.Module):
         outputs["stage3"] = out, nc_sum, nc02.abs()
 
         return outputs
-
-# class FeatureNet(nn.Module):
-#     def __init__(self, base_channels, arch_mode="unet"):
-#         super(FeatureNet, self).__init__()
-#         assert arch_mode in ["unet", "fpn"], print("mode must be in 'unet' or 'fpn', but get:{}".format(arch_mode))
-#         print("*************feature extraction arch mode:{}****************".format(arch_mode))
-#         self.arch_mode = arch_mode
-#         self.base_channels = base_channels
-#
-#         convs = [Conv2d(3, base_channels, 3, 1, padding=1, dynamic=True)]
-#         for _ in range(4):
-#             convs.append(Conv2d(base_channels, base_channels, 3, 1, padding=1, dynamic=True))
-#         self.convs = nn.ModuleList(convs)
-#         self.out = nn.Conv2d(base_channels, base_channels, 1, bias=False)
-#         self.out_channels = base_channels
-#
-#     def forward(self, x, epipole=None):
-#         for conv in self.convs:
-#             x = conv((x, epipole))
-#         out = self.out(x)
-#         return out
 
 
 class CostRegNet(nn.Module):
