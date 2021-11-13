@@ -52,10 +52,10 @@ class DTUMVSDataset(Dataset):
                     # f.readline() # ignore the given source views
                     # src_views = [x for x in range(left, left+self.nviews) if x != ref_view]
                     # light conditions 0-6
-                    #if self.mode == 'train':
-                    #    lights = np.random.choice(np.arange(7), 4, replace=False)
-                    #else:
-                    lights = np.arange(7)
+                    if self.mode == 'train':
+                        lights = np.random.choice(np.arange(7), 4, replace=False)
+                    else:
+                        lights = np.arange(7)
                     for light_idx in lights:
                         metas.append((scan, light_idx, ref_view, src_views))
         print("dataset", self.mode, "metas:", len(metas))

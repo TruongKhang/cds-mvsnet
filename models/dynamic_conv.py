@@ -50,7 +50,7 @@ def compute_epipole(Fmatrix):
 
 def dGauss(img, kernel_size):
     in_channels = img.shape[1]
-    sigma = float(kernel_size / 9 * 1.2)
+    sigma = float(kernel_size / 5)
     y, x = torch.meshgrid([torch.arange(-(kernel_size - 1) // 2, (kernel_size - 1) // 2 + 1, dtype=torch.float32, device=img.device),
                            torch.arange(-(kernel_size - 1) // 2, (kernel_size - 1) // 2 + 1, dtype=torch.float32, device=img.device)])
     gauss_kernel = torch.exp(- (x ** 2 + y ** 2) / (2 * sigma ** 2)) / (2 * np.pi * sigma ** 2)
@@ -64,12 +64,12 @@ def dGauss(img, kernel_size):
     weight = weight.unsqueeze(1).repeat(1, in_channels, 1, 1) / in_channels
     filtered_results = F.conv2d(img, weight, None, 1, (kernel_size-1)//2, 1, 1)
     dx, dy, dxx, dxy, dyy = torch.unbind(filtered_results, dim=1)
-    return dx, dy, dxx, dxy, dyy
+    return dx.unsqueeze(1), dy.unsqueeze(1), dxx.unsqueeze(1), dxy.unsqueeze(1), dyy.unsqueeze(1)
 
 
-class CDSConvGauss(nn.Module):
+class DynamicConv(nn.Module):
     def __init__(self, in_c, out_c, size_kernels=(3, 5, 7), stride=1, bias=True, thresh_curv=0.01, **kwargs):
-        super(CDSConvGauss, self).__init__()
+        super(DynamicConv, self).__init__()
         self.size_kernels = size_kernels
         self.thresh_curv = thresh_curv
         self.auto_selection = kwargs.get("auto_selection", False)
@@ -111,10 +111,11 @@ class CDSConvGauss(nn.Module):
         else:
             est_curv, indices = torch.min((curvs - self.thresh_curv).abs(), dim=1, keepdim=True)
             filtered_result = torch.gather(results, 1, indices.unsqueeze(2).repeat(1, 1, results.shape[2], 1, 1))
-        return filtered_result.squeeze(1), est_curv
+            filtered_result = filtered_result.squeeze(1)
+        return filtered_result, est_curv
 
 
-class DynamicConv(nn.Module):
+"""class DynamicConv(nn.Module):
     def __init__(self, in_c, out_c, size_kernels=(3, 5, 7), stride=1, bias=True, thresh_scale=0.01, **kwargs):
         super(DynamicConv, self).__init__()
         self.size_kernels = size_kernels
@@ -162,7 +163,7 @@ class DynamicConv(nn.Module):
         weights = F.softmax(weights / temperature, dim=1)
         filtered_result = (torch.cat(results, dim=1) * weights.unsqueeze(2)).sum(dim=1)
         norm_curv = (curvs * weights).sum(dim=1, keepdim=True)
-        return filtered_result, norm_curv #, sum_mask, t11, t12, t13
+        return filtered_result, norm_curv #, sum_mask, t11, t12, t13"""
 
 
 def read_cam_file(filename, interval_scale=1.0):
