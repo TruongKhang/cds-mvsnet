@@ -1,9 +1,9 @@
 {
-    "name": "TAMVS",
-    "n_gpu": 1,
+    "name": "CDS-MVSNet",
+    "n_gpu": 2,
 
     "arch": {
-        "type": "TAMVSNet",
+        "type": "CDSMVSNet",
         "args": {
             "refine": true,
             "ndepths": [48, 32, 8],
@@ -17,7 +17,7 @@
       {
         "type": "DTULoader",
         "args":{
-            "data_path": "/mnt/sdb/khang/dtu_dataset/train",
+            "data_path": "/mnt/sdb1/khang/dtu_dataset/train",
             "train_data_list": "lists/dtu/train.txt",
             "val_data_list": "lists/dtu/val.txt",
             "mode": "train",
@@ -34,7 +34,7 @@
         "type": "SGD",
         "args":{
             "lr": 0.01,
-            "weight_decay": 0.001
+            "weight_decay": 0.01
         }
     },
     "loss": "final_loss",
@@ -58,7 +58,7 @@
         "early_stop": 20,
         "tensorboard": false,
         "depth_scale": 1.0,
-        "lrepochs": "10,15,20:2",
+        "lrepochs": "5,10,15:2",
         "dlossw": [0.5, 1.0, 2.0],
         "eval_freq": 1
     }

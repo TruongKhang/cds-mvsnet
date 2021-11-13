@@ -95,10 +95,10 @@ class StageNet(nn.Module):
         return {"depth": depth,  "photometric_confidence": photometric_confidence, "feat_distance": feat_distance_vol, "norm_curv": nc_mean} if self.training else {"depth": depth,  "photometric_confidence": photometric_confidence, "norm_curv": nc_mean}
 
 
-class TAMVSNet(nn.Module):
+class CDSMVSNet(nn.Module):
     def __init__(self, refine=False, ndepths=(48, 32, 8), depth_interals_ratio=(4, 2, 1), share_cr=False,
                  grad_method="detach", arch_mode="fpn", cr_base_chs=(8, 8, 8)):
-        super(TAMVSNet, self).__init__()
+        super(CDSMVSNet, self).__init__()
         self.refine = refine
         self.share_cr = share_cr
         self.ndepths = ndepths
