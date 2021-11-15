@@ -40,22 +40,16 @@ class DTUMVSDataset(Dataset):
                 # viewpoints (49)
                 for view_idx in range(num_viewpoint):
                     ref_view = int(f.readline().rstrip())
-                    if ref_view < (self.nviews - 1) // 2:
-                        left = 0
-                    else:
-                        left = ref_view - (self.nviews - 1) // 2
-                    if (left + self.nviews) > num_viewpoint:
-                        left = num_viewpoint - self.nviews
                     src_views = [int(x) for x in f.readline().rstrip().split()[1::2]]
-                    src_views = src_views[:(self.nviews-1)]
+                    # src_views = src_views[:(self.nviews-1)]
 
                     # f.readline() # ignore the given source views
                     # src_views = [x for x in range(left, left+self.nviews) if x != ref_view]
                     # light conditions 0-6
-                    #if self.mode == 'train':
-                    #    lights = np.random.choice(np.arange(7), 4, replace=False)
-                    #else:
-                    lights = np.arange(7)
+                    if self.mode == 'train':
+                        lights = np.random.choice(np.arange(7), 4, replace=False)
+                    else:
+                        lights = np.arange(7)
                     for light_idx in lights:
                         metas.append((scan, light_idx, ref_view, src_views))
         print("dataset", self.mode, "metas:", len(metas))
@@ -139,7 +133,6 @@ class DTUMVSDataset(Dataset):
         meta = self.metas[idx]
         scan, light_idx, ref_view, src_views = meta
         if self.mode == 'train':
-            src_views = src_views[:7]
             np.random.shuffle(src_views)
         view_ids = [ref_view] + src_views[:(self.nviews-1)]
         # view_ids = [ref_view] + src_views
