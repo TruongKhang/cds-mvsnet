@@ -109,7 +109,8 @@ class DynamicConv(nn.Module):
             filtered_result = (results * weights.unsqueeze(2)).sum(dim=1)
             est_curv = (curvs * weights).sum(dim=1, keepdim=True)
         else:
-            est_curv, indices = torch.min((curvs - self.thresh_curv).abs(), dim=1, keepdim=True)
+            indices = torch.argmin((curvs - self.thresh_curv).abs(), dim=1, keepdim=True)
+            est_curv = torch.gather(curvs, 1, indices)
             filtered_result = torch.gather(results, 1, indices.unsqueeze(2).repeat(1, 1, results.shape[2], 1, 1))
             filtered_result = filtered_result.squeeze(1)
         return filtered_result, est_curv

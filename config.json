@@ -1,6 +1,6 @@
 {
     "name": "CDS-MVSNet",
-    "n_gpu": 2,
+    "n_gpu": 3,
 
     "arch": {
         "type": "CDSMVSNet",
@@ -26,7 +26,7 @@
             "interval_scale": 1.06,
             "shuffle": true,
             "seq_size": 7,
-            "batch_size": 8
+            "batch_size": 12
         }
       }
     ],
@@ -49,7 +49,7 @@
         }
     },
     "trainer": {
-        "epochs": 30,
+        "epochs": 20,
         "seq": true,
         "save_dir": "saved/",
         "save_period": 1,
