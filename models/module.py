@@ -268,27 +268,27 @@ class FeatureNet(nn.Module):
         self.base_channels = base_channels
         self.num_stage = num_stage
 
-        self.conv00 = Conv2d(3, base_channels, (3, 7, 11), 1, dynamic=True, auto_selection=True)
-        self.conv01 = Conv2d(base_channels, base_channels, (3, 5, 7), 1, dynamic=True, auto_selection=True)
+        self.conv00 = Conv2d(3, base_channels, (3, 7, 11), 1, dynamic=True, auto_selection=False)
+        self.conv01 = Conv2d(base_channels, base_channels, (3, 5, 7), 1, dynamic=True, auto_selection=False)
 
         self.downsample1 = Conv2d(base_channels, base_channels*2, 3, stride=2, padding=1)
-        self.conv10 = Conv2d(base_channels*2, base_channels*2, (3, 5), 1, dynamic=True, auto_selection=True)
-        self.conv11 = Conv2d(base_channels*2, base_channels*2, (3, 5), 1, dynamic=True, auto_selection=True)
+        self.conv10 = Conv2d(base_channels*2, base_channels*2, (3, 5), 1, dynamic=True, auto_selection=False)
+        self.conv11 = Conv2d(base_channels*2, base_channels*2, (3, 5), 1, dynamic=True, auto_selection=False)
 
         self.downsample2 = Conv2d(base_channels*2, base_channels*4, 3, stride=2, padding=1)
-        self.conv20 = Conv2d(base_channels*4, base_channels*4, (1, 3), 1, dynamic=True, auto_selection=True)
-        self.conv21 = Conv2d(base_channels*4, base_channels*4, (1, 3), 1, dynamic=True, auto_selection=True)
+        self.conv20 = Conv2d(base_channels*4, base_channels*4, (1, 3), 1, dynamic=True, auto_selection=False)
+        self.conv21 = Conv2d(base_channels*4, base_channels*4, (1, 3), 1, dynamic=True, auto_selection=False)
 
-        self.out1 = DynamicConv(base_channels*4, base_channels*4, size_kernels=(1, 3), auto_selection=True)
+        self.out1 = DynamicConv(base_channels*4, base_channels*4, size_kernels=(1, 3), auto_selection=False)
         self.act1 = nn.Sequential(nn.InstanceNorm2d(base_channels*4), nn.Tanh())
         self.out_channels = [base_channels*4]
 
         self.inner1 = Conv2d(base_channels * 6, base_channels * 2, 1)
         self.inner2 = Conv2d(base_channels * 3, base_channels, 1)
 
-        self.out2 = DynamicConv(base_channels*2, base_channels*2, size_kernels=(1, 3), auto_selection=True)
+        self.out2 = DynamicConv(base_channels*2, base_channels*2, size_kernels=(1, 3), auto_selection=False)
         self.act2 = nn.Sequential(nn.InstanceNorm2d(base_channels*2), nn.Tanh())
-        self.out3 = DynamicConv(base_channels, base_channels, size_kernels=(1, 3), auto_selection=True)
+        self.out3 = DynamicConv(base_channels, base_channels, size_kernels=(1, 3), auto_selection=False)
         self.act3 = nn.Sequential(nn.InstanceNorm2d(base_channels), nn.Tanh())
         self.out_channels.append(base_channels*2)
         self.out_channels.append(base_channels)
