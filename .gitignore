@@ -136,3 +136,8 @@ tt_outputs
 move.py
 *.ckpt
 *.pth
+est_depths
+eval_out*
+fusibile
+results
+log.txt
