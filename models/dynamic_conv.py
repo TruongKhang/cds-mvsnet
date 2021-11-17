@@ -50,16 +50,18 @@ def compute_epipole(Fmatrix):
 
 def dGauss(img, kernel_size):
     in_channels = img.shape[1]
-    sigma = float(kernel_size / 5)
+    sigma = float(1.2 * kernel_size / 9)
     y, x = torch.meshgrid([torch.arange(-(kernel_size - 1) // 2, (kernel_size - 1) // 2 + 1, dtype=torch.float32, device=img.device),
                            torch.arange(-(kernel_size - 1) // 2, (kernel_size - 1) // 2 + 1, dtype=torch.float32, device=img.device)])
     gauss_kernel = torch.exp(- (x ** 2 + y ** 2) / (2 * sigma ** 2)) / (2 * np.pi * sigma ** 2)
 
     gx = -x / (sigma ** 2) * gauss_kernel
     gy = -y / (sigma ** 2) * gauss_kernel
-    gxx = (x ** 2 - sigma ** 2) / (sigma ** 4) * gauss_kernel
+    gxx = (x ** 2 - sigma ** 2) / (sigma ** 4) * gauss_kernel # normalize
+    gxx -= gxx.sum(dim=1, keepdims=True) / kernel_size 
     gxy = x * y / (sigma ** 4) * gauss_kernel
     gyy = (y ** 2 - sigma ** 2) / (sigma ** 4) * gauss_kernel
+    gyy -= gyy.sum(dim=0, keepdims=True) / kernel_size # normalize
     weight = torch.stack((gx, gy, gxx, gxy, gyy))
     weight = weight.unsqueeze(1).repeat(1, in_channels, 1, 1) / in_channels
     filtered_results = F.conv2d(img, weight, None, 1, (kernel_size-1)//2, 1, 1)
