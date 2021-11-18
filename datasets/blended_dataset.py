@@ -42,7 +42,7 @@ class BlendedMVSDataset(Dataset):
                         if len(src_views) < self.nviews:
                             print("{}< num_views:{}".format(len(src_views), self.nviews))
                             src_views += [src_views[0]] * (self.nviews - len(src_views))
-                        src_views = src_views[:(self.nviews-1)]
+                        # src_views = src_views[:(self.nviews-1)]
                         metas.append((scan, ref_view, src_views, scan))
 
         # self.interval_scale = interval_scale_dict
