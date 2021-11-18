@@ -137,3 +137,8 @@ move.py
 *.ckpt
 *.pth
 gauss_curv*
+est_depths
+eval_out*
+fusibile
+results
+log.txt
