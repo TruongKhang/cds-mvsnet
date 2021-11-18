@@ -136,3 +136,4 @@ tt_outputs
 move.py
 *.ckpt
 *.pth
+gauss_curv*
