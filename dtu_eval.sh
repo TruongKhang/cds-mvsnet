@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-TESTPATH="/mnt/sdb1/khang/dtu_dataset/test"
+TESTPATH="/mnt/sdb/khang/dtu_dataset/test"
 TESTLIST="lists/dtu/test.txt"
 CKPT_FILE=$1
 OUTDIR=$2
