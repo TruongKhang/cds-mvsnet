@@ -205,13 +205,13 @@ def save_depth(testlist, config):
 
     with torch.no_grad():
         for batch_idx, sample in enumerate(test_data_loader):
-            # torch.cuda.synchronize()
+            torch.cuda.synchronize()
             start_time = time.time()
             sample_cuda = tocuda(sample)
             num_stage = 3 if args.no_refinement else 4
             imgs, cam_params = sample_cuda["imgs"], sample_cuda["proj_matrices"]
             outputs = model(imgs, cam_params, sample_cuda["depth_values"], temperature=args.temperature)
-            # torch.cuda.synchronize()
+            torch.cuda.synchronize()
             # outputs["ps_map"] = model.feature.extract_ps_map()
 
             end_time = time.time()
