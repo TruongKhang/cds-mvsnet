@@ -41,9 +41,9 @@ Run these commands to build fusibile:
     make
     cp fusibile ../
 
-Then, change the parameters in file `dtu_eval.sh` and run it to generate reconstruction:
+Then, change the parameters in file `dtu_eval.sh` if necessary and run it to generate reconstruction:
 
-    bash dtu_eval.sh
+    bash dtu_eval.sh <path to DTU test set> <pretrained model> <output folder>
 
 To evaluate these reconstructed point clouds, use the evaluation code from the [DTU benchmark website](https://roboimagedata.compute.dtu.dk/?page_id=36). 
 We already provide the evaluation code in the evaluation folder. 
@@ -51,7 +51,7 @@ The results should be similar to this
 
 |                       | Acc.   | Comp.  | Overall. |
 |-----------------------|--------|--------|----------|
-| CDS-MVSNet(DTU only, depths=48,32,8, intervals=4.0,1.5,0.75)  | 0.354  | 0.287  | 0.320    |
+| CDS-MVSNet(DTU only, depths=48,32,8, intervals=4.0,1.5,0.75)  | 0.352  | 0.280  | 0.316    |
 | CDS-MVSNet(DTU+BlendedMVS, depths=48,32,8, intervals=4.0,1.5,0.75)  | 0.351  | 0.278  | 0.315    |
 
 
@@ -60,7 +60,7 @@ Download the intermediate dataset preprocessed by [Yao Yao](https://github.com/Y
 Note that users should use the short depth range of cameras
 Run the evaluation script to produce the point clouds
 
-    bash tt_eval.sh
+    bash tt_eval.sh <path to intermediate set of Tanks&Temples> <pretrained model>
 
 Submit the results to the [Tanks & Temples benchmark website](https://www.tanksandtemples.org/) to receive the F-score. 
 Due to large point clouds generated, user may need a NVIDIA card with high memory.
