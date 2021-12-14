@@ -1,6 +1,7 @@
 # CDS-MVSNet
 Our paper **Curvature-guided dynamic scale networks for multi-view stereo** is available [here](https://arxiv.org/pdf/2112.05999.pdf)
 
+![Alt Text](demo.gif)
 
 ## Requirements
     conda create -n venv python=3.6
