@@ -1,5 +1,7 @@
 # CDS-MVSNet
-Our paper **Curvature-guided dynamic scale networks for multi-view stereo** is available [here](https://arxiv.org/pdf/2112.05999.pdf)
+This is an official implementation of our paper [Curvature-guided dynamic scale networks for multi-view stereo](https://arxiv.org/pdf/2112.05999.pdf).
+
+We are on progress to optimize the code. Please keep update the latest release.
 
 ![Alt Text](demo.gif)
 
