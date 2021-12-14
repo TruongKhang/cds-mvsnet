@@ -34,7 +34,9 @@ Then, run this command to train model:
     python train.py --config config_all_dataset.json
     
 ### Testing
-##DTU
+
+**DTU**
+
 First, download the DTU evaluation dataset from [Yao Yao](https://github.com/YoYo000/MVSNet).
 To generate point clouds, users need to install [fusibile](https://github.com/kysucix/fusibile). We already provide its source code in our folder.
 Run these commands to build fusibile:
@@ -58,7 +60,8 @@ The results should be similar to this
 | CDS-MVSNet(DTU+BlendedMVS, depths=48,32,8, intervals=4.0,1.5,0.75)  | 0.351  | 0.278  | 0.315    |
 
 
-## Tanks & Temples
+**Tanks & Temples**
+
 Download the intermediate dataset preprocessed by [Yao Yao](https://github.com/YoYo000/MVSNet).
 Note that users should use the short depth range of cameras
 Run the evaluation script to produce the point clouds
