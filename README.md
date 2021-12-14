@@ -20,8 +20,8 @@ To train model on DTU dataset, change the directory of DTU dataset in the config
 
     python train.py --config config.json
     
-After the training is finished, the train model will be saved in 'saved/models/CDS-MVSNet/<date_and_year>'. 
-To fine-tune on BlendedMVS dataset, you need to update the file `config.json` in 'saved/models/CDS-MVSNet/<date_and_year>/config.json' by contents in file 'config_blended.json'.
+After the training is finished, the train model will be saved in `saved/models/CDS-MVSNet/<date_and_year>`. 
+To fine-tune on BlendedMVS dataset, you need to update the file `config.json` in `saved/models/CDS-MVSNet/<date_and_year>/config.json` by contents in file `config_blended.json`.
 Then, run this command to start fine-tuning on BlendedMVS
 
     python train.py --resume saved/models/CDS-MVSNet/<date_and_year>/checkpoint-epoch30.pth
