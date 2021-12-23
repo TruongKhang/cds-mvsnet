@@ -106,8 +106,6 @@ class BlendedMVSDataset(Dataset):
         return depth_ms
 
     def read_mask(self, filename):
-        #img = ImageOps.grayscale(Image.open(filename))
-        #np_img = np.array(img, dtype=np.float32)
         depth = np.array(read_pfm(filename)[0], dtype=np.float32)
         np_img = (depth > 0).astype(np.float32)
         np_img = self.prepare_img(np_img)

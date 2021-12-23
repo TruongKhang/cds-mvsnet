@@ -4,7 +4,6 @@ import torch
 import torch.nn.parallel
 import torch.backends.cudnn as cudnn
 import numpy as np
-import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader, SequentialSampler
 
 from parse_config import ConfigParser
@@ -13,12 +12,8 @@ import models.model as module_arch
 from datasets.data_io import read_pfm, save_pfm
 from plyfile import PlyData, PlyElement
 from gipuma import gipuma_filter
-from utils import tocuda, print_args, generate_pointcloud, tensor2numpy
+from utils import tocuda, print_args, tensor2numpy
 import fusion
-
-from multiprocessing import Pool
-from functools import partial
-import signal
 
 cudnn.benchmark = True
 
@@ -154,12 +149,7 @@ def write_cam(file, cam):
     f.close()
 
 
-# def save_depth(testlist, config):
-#     for scene in testlist:
-#         save_scene_depth([scene], config)
-
-
-# run CasMVS model to save depth maps and confidence maps
+# run model to save depth maps and confidence maps
 def save_depth(testlist, config):
     # dataset, dataloader
 
@@ -270,16 +260,6 @@ def save_depth(testlist, config):
                 # plt.imshow(photometric_confidence)
                 # plt.show()
 
-                """if num_stage == 1:
-                    downsample_img = cv2.resize(img, (int(img.shape[1] * 0.25), int(img.shape[0] * 0.25)))
-                elif num_stage == 2:
-                    downsample_img = cv2.resize(img, (int(img.shape[1] * 0.5), int(img.shape[0] * 0.5)))
-                elif num_stage == 3:
-                    downsample_img = img
-
-                if batch_idx % args.save_freq == 0:
-                    generate_pointcloud(downsample_img, depth_est, ply_filename, cam[1, :3, :3])"""
-
     print("average time: ", sum(times) / len(times))
     torch.cuda.empty_cache()
     gc.collect()
@@ -353,9 +333,6 @@ def filter_depth(pair_folder, scan_folder, out_folder, plyfilename):
     prob_threshold = [float(p) for p in prob_threshold.split(',')]
     for batch_idx, sample_np in enumerate(tt_dataloader):
         sample = tocuda(sample_np)
-        #if sample_np.get('skip') is not None and np.any(sample_np['skip']): continue
-        #sample = {attr: torch.from_numpy(sample_np[attr]).float().cuda() for attr in sample_np if
-        #          attr not in ['skip', 'id']}
         for ids in range(sample["src_depths"].size(1)):
             src_prob_mask = fusion.prob_filter(sample['src_confs'][:, ids, ...], prob_threshold)
             sample["src_depths"][:, ids, ...] *= src_prob_mask.float()
@@ -395,29 +372,6 @@ def filter_depth(pair_folder, scan_folder, out_folder, plyfilename):
     print('Write combined PCD')
     p_all, c_all = [np.concatenate([v[k] for key, v in views.items()], axis=0) for k in range(2)]
 
-    # pcd = o3d.geometry.PointCloud()
-    # pcd.points = o3d.utility.Vector3dVector(p_all)
-    # pcd.colors = o3d.utility.Vector3dVector(c_all)
-    # print('Estimate normal')
-    # pcd.estimate_normals()
-    # all_normals_np = np.asarray(pcd.normals)
-    # is_same_dir = (all_normals_np * d_all).sum(-1, keepdims=True) > 0
-    # all_normals_np *= is_same_dir.astype(np.float32) * 2 - 1
-    # pcd.normals = o3d.utility.Vector3dVector(all_normals_np)
-
-    # if args.downsample is not None:
-    #     print('Down sample')
-    #     pcd = pcd.voxel_down_sample(args.downsample)
-
-    #o3d.io.write_point_cloud(plyfilename, pcd, print_progress=True)
-
-    """vertexs, vertex_colors = [], []
-    for i in range(len(p_all)):
-        if np.sum(np.isnan(p_all[i])) == 0:
-            vertexs.append(tuple(p_all[i]))
-            vertex_colors.append(tuple(c_all[i]))
-    vertexs = np.array(vertexs, dtype=[('x', 'f4'), ('y', 'f4'), ('z', 'f4')])
-    vertex_colors = np.array(vertex_colors, dtype=[('red', 'u1'), ('green', 'u1'), ('blue', 'u1')])"""
     vertexs = np.array([tuple(v) for v in p_all], dtype=[('x', 'f4'), ('y', 'f4'), ('z', 'f4')])
     vertex_colors = np.array([tuple(v) for v in c_all], dtype=[('red', 'u1'), ('green', 'u1'), ('blue', 'u1')])
 
@@ -432,18 +386,7 @@ def filter_depth(pair_folder, scan_folder, out_folder, plyfilename):
     print("saving the final model to", plyfilename)
 
 
-def init_worker():
-    '''
-    Catch Ctrl+C signal to termiante workers
-    '''
-    signal.signal(signal.SIGINT, signal.SIG_IGN)
-
-
 def pcd_filter_worker(scan):
-    #if args.testlist != "all":
-    #    scan_id = int(scan[4:])
-    #    save_name = 'mvsnet{:0>3}_l3.ply'.format(scan_id)
-    #else:
     save_name = '{}.ply'.format(scan)
     pair_folder = os.path.join(args.testpath, scan)
     scan_folder = os.path.join(args.outdir, scan)
@@ -451,21 +394,9 @@ def pcd_filter_worker(scan):
     filter_depth(pair_folder, scan_folder, out_folder, os.path.join(args.outdir, save_name))
 
 
-def pcd_filter(testlist, number_worker):
+def pcd_filter(testlist):
     for scan in testlist:
         pcd_filter_worker(scan)
-
-    """partial_func = partial(pcd_filter_worker)
-
-    p = Pool(number_worker, init_worker)
-    try:
-        p.map(partial_func, testlist)
-    except KeyboardInterrupt:
-        print("....\nCaught KeyboardInterrupt, terminating workers")
-        p.terminate()
-    else:
-        p.close()
-    p.join()"""
 
 
 if __name__ == '__main__':
@@ -487,7 +418,7 @@ if __name__ == '__main__':
 
     if args.filter_method != "gipuma":
          #support multi-processing, the default number of worker is 4
-        pcd_filter(testlist, args.num_worker)
+        pcd_filter(testlist)
     else:
         prob_threshold = args.prob_threshold
         prob_threshold = [float(p) for p in prob_threshold.split(',')]

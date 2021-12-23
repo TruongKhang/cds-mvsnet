@@ -2,7 +2,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from time import time
 
 
 def skew_matrix(vector3d):
@@ -91,13 +90,6 @@ class DynamicConv(nn.Module):
                                          nn.BatchNorm2d(hidden_dim),
                                          nn.ReLU(inplace=True),
                                          nn.Conv2d(hidden_dim, len(size_kernels), 1, bias=False))
-        # att_weights = []
-        # for k in size_kernels:
-        #     att_weights.append(nn.Sequential(nn.Conv2d(in_c, hidden_dim, k, padding=(k-1)//2, bias=False),
-        #                                      nn.ReLU(inplace=True),
-        #                                      nn.Conv2d(hidden_dim, 1, 1, bias=True)))
-        # self.att_weights = nn.ModuleList(att_weights)
-        # self.temperature = kwargs.get("temperature", 0.001)
 
         for p in self.att_convs.parameters():
             torch.nn.init.normal_(p, std=0.1)

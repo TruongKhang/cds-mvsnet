@@ -11,7 +11,6 @@ Align_Corners_Range = False
 class StageNet(nn.Module):
     def __init__(self, num_mvs_stages=3):
         super(StageNet, self).__init__()
-        #self.vis = nn.ModuleList([nn.Sequential(ConvBnReLU(2, 32), nn.Conv2d(32, 1, 1), nn.Sigmoid()) for _ in range(num_mvs_stages)])
         self.vis = nn.ModuleList([nn.Sequential(ConvBnReLU(2, 16), ConvBnReLU(16, 16), ConvBnReLU(16, 16), nn.Conv2d(16, 1, 1), nn.Sigmoid()) for _ in range(num_mvs_stages)])
 
     def forward(self, features, proj_matrices, depth_values, num_depth, cost_regularization, prob_volume_init=None, stage_idx=0,
@@ -225,7 +224,7 @@ class CDSMVSNet(nn.Module):
 
 
 if __name__ == '__main__':
-    model = TAMVSNet()
+    model = CDSMVSNet()
     model = model.to(torch.device('cuda'))
     result = model(torch.rand(1, 3, 3, 512, 640).cuda(), {"stage1": torch.rand(1, 3, 2, 4, 4).cuda(),
                                                           "stage2": torch.rand(1, 3, 2, 4, 4).cuda(),

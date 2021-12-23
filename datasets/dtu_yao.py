@@ -43,13 +43,11 @@ class DTUMVSDataset(Dataset):
                     src_views = [int(x) for x in f.readline().rstrip().split()[1::2]]
                     # src_views = src_views[:(self.nviews-1)]
 
-                    # f.readline() # ignore the given source views
-                    # src_views = [x for x in range(left, left+self.nviews) if x != ref_view]
                     # light conditions 0-6
-                    if self.mode == 'train':
-                        lights = np.random.choice(np.arange(7), 4, replace=False)
-                    else:
-                        lights = np.arange(7)
+                    # if self.mode == 'train':
+                    #     lights = np.random.choice(np.arange(7), 4, replace=False)
+                    # else:
+                    lights = np.arange(7)
                     for light_idx in lights:
                         metas.append((scan, light_idx, ref_view, src_views))
         print("dataset", self.mode, "metas:", len(metas))
@@ -197,5 +195,4 @@ class DTUMVSDataset(Dataset):
                 "proj_matrices": proj_matrices_ms,
                 "depth": depth_ms,
                 "depth_values": depth_values,
-                "mask": mask} #,
-                #"is_begin": self.list_begin[idx]}
+                "mask": mask}

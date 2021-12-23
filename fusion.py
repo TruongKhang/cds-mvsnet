@@ -1,30 +1,7 @@
-import argparse
+"""This source code is from Vis-MVSNet (https://github.com/jzhangbs/Vis-MVSNet)"""
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
-import tqdm
-# import matplotlib.pyplot as plt
-import numpy as np
-# import open3d as o3d
-import os
 from typing import List
-
-# from data.depth2pcd import get_val_loader
-# from core.homography import get_pixel_grids
-# from core.nn_utils import bin_op_reduce
-# from utils.io_utils import subplot_map
-
-"""parser = argparse.ArgumentParser()
-
-parser.add_argument('--data', type=str, default='')
-parser.add_argument('--pair', type=str, default='')
-parser.add_argument('--view', type=int, default=10)
-parser.add_argument('--vthresh', type=int, default=4)
-parser.add_argument('--pthresh', type=str, default='.8,.7,.8')
-parser.add_argument('--cam_scale', type=float, default=1)
-parser.add_argument('--show_result', action='store_true', default=False)
-
-args = parser.parse_args()"""
 
 
 def get_pixel_grids(height, width):
@@ -135,55 +112,3 @@ def vis_filter(ref_depth, reproj_xyd, in_range, img_dist_thresh, depth_thresh, v
 def ave_fusion(ref_depth, reproj_xyd, masks):
     ave = ((reproj_xyd[:, :, 2:, :, :] * masks).sum(dim=1) + ref_depth) / (masks.sum(dim=1) + 1)  # n1hw
     return ave
-
-
-# if __name__ == '__main__':
-#
-#     dataset, loader = get_val_loader(args.data, args.pair, args.view, {})
-#     pthresh = [float(v) for v in args.pthresh.split(',')]
-#
-#     views = {}
-#
-#     pbar = tqdm.tqdm(loader, dynamic_ncols=True)
-#     for sample_np in pbar:
-#         if sample_np.get('skip') is not None and np.any(sample_np['skip']): continue
-#         sample = {attr: torch.from_numpy(sample_np[attr]).float().cuda() for attr in sample_np if
-#                   attr not in ['skip', 'id']}
-#
-#         prob_mask = prob_filter(sample['ref_probs'], pthresh)
-#
-#         reproj_xyd, in_range = get_reproj(
-#             *[sample[attr] for attr in ['ref_depth', 'srcs_depth', 'ref_cam', 'srcs_cam']])
-#         vis_masks, vis_mask = vis_filter(sample['ref_depth'], reproj_xyd, in_range, 1, 0.01, args.vthresh)
-#
-#         ref_depth_ave = ave_fusion(sample['ref_depth'], reproj_xyd, vis_masks)
-#
-#         mask = bin_op_reduce([prob_mask, vis_mask], torch.min)
-#
-#         if args.show_result:
-#             subplot_map([
-#                 [sample['ref_depth'][0, 0].cpu().data.numpy(), ref_depth_ave[0, 0].cpu().data.numpy(),
-#                  (ref_depth_ave * mask)[0, 0].cpu().data.numpy()],
-#                 [prob_mask[0, 0].cpu().data.numpy(), vis_mask[0, 0].cpu().data.numpy(), mask[0, 0].cpu().data.numpy()]
-#             ])
-#             plt.show()
-#
-#         idx_img = get_pixel_grids(*ref_depth_ave.size()[-2:]).unsqueeze(0)
-#         idx_cam = idx_img2cam(idx_img, ref_depth_ave, sample['ref_cam'])
-#         points = idx_cam2world(idx_cam, sample['ref_cam'])[..., :3, 0].permute(0, 3, 1, 2)
-#         points_np = points.cpu().data.numpy()
-#         mask_np = mask.cpu().data.numpy()
-#         for i in range(points_np.shape[0]):
-#             p_f_list = [points_np[i, k][mask_np[i, 0]] for k in range(3)]
-#             p_f = np.stack(p_f_list, -1)
-#             c_f_list = [sample_np['ref'][i, k][mask_np[i, 0]] for k in range(3)]
-#             c_f = np.stack(c_f_list, -1) / 255
-#             ref_id = str(sample_np['id'][i])
-#             views[ref_id] = (p_f, c_f)
-#
-#     print('Write combined PCD')
-#     p_all, c_all = [np.concatenate([v[k] for key, v in views.items()], axis=0) for k in range(2)]
-#     pcd = o3d.geometry.PointCloud()
-#     pcd.points = o3d.utility.Vector3dVector(p_all)
-#     pcd.colors = o3d.utility.Vector3dVector(c_all)
-#     o3d.io.write_point_cloud(os.path.join(args.data, f'all_torch.ply'), pcd)
