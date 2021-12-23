@@ -6,7 +6,7 @@ We are on progress to optimize the code. Please keep update the latest release.
 ![Alt Text](demo.gif)
 
 ## TODO List
-- [ ] Make repo clean (expected release before Christmas)
+- [x] Make repo clean
 - [ ] Upload pretrained models, DTU and Tanks&Temples pointclouds (before New Year)
 - [ ] Optimize curvature-guided dynamic convolution by implementing it in C++ with CUDA extensions (expected at the end of Jan, 2022 - before Lunar New Year) 
 
