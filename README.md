@@ -7,7 +7,7 @@ We are on progress to optimize the code. Please keep update the latest release.
 
 ## TODO List
 - [x] Make repo clean
-- [ ] Upload pretrained models, DTU and Tanks&Temples pointclouds (before New Year)
+- [x] Upload [all pretrained models](pretrains/), [DTU]() and [TanksandTemples]() pointclouds.
 - [ ] Optimize curvature-guided dynamic convolution by implementing it in C++ with CUDA extensions (expected at the end of Jan, 2022 - before Lunar New Year) 
 
 ## Requirements
