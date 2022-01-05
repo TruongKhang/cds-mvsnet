@@ -3,6 +3,8 @@ This is an official implementation of our paper [Curvature-guided dynamic scale 
 
 We are on progress to optimize the code. Please keep update the latest release.
 
+Our method can perform reconstruction in real-time due to fast run-time and low-memory consumption. Here is a demo with the input video captured by a smartphone. We applied a SLAM method for camera pose estimation and then used CDS-MVSNet for dense reconstruction.
+
 ![Alt Text](demo.gif)
 
 ## TODO List
