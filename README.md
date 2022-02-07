@@ -10,7 +10,6 @@ Our method can perform reconstruction in real-time due to fast run-time and low-
 ## TODO List
 - [x] Make repo clean
 - [x] Upload [all pretrained models](pretrained/), [DTU](https://kaist.gov-dooray.com/share/drive-files/kkmh2qu2awzo.ilfnXskMRIeGeWKmUj1XAQ) and [TanksandTemples](https://kaist.gov-dooray.com/share/drive-files/kkmh2qu2awzo.ptZ1DiyZRuC6NaHSAs3a0A) pointclouds.
-- [ ] Optimize curvature-guided dynamic convolution by implementing it in C++ with CUDA extensions (expected at the end of Jan, 2022 - before Lunar New Year) 
 
 ## Requirements
     conda create -n venv python=3.6
