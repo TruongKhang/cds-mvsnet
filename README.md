@@ -1,4 +1,4 @@
-# CDS-MVSNet
+# [ICLR2022] CDS-MVSNet
 This is an official implementation of our paper [Curvature-guided dynamic scale networks for multi-view stereo](https://arxiv.org/pdf/2112.05999.pdf), which was accepted at ICLR 2022.
 
 We are on progress to optimize the code. Please keep update the latest release.
@@ -80,3 +80,12 @@ Submit the results to the [Tanks & Temples benchmark website](https://www.tanksa
 Due to large point clouds generated, user may need a NVIDIA card with high memory.
 
 We made the results publicly available on the leaderboard of Tanks & Temples.
+
+### Citations
+
+ @article{giang2021curvature,
+   title={Curvature-guided dynamic scale networks for Multi-view Stereo},
+  author={Giang, Khang Truong and Song, Soohwan and Jo, Sungho},
+  journal={arXiv preprint arXiv:2112.05999},
+  year={2021}
+}`
