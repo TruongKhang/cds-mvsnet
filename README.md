@@ -82,10 +82,11 @@ Due to large point clouds generated, user may need a NVIDIA card with high memor
 We made the results publicly available on the leaderboard of Tanks & Temples.
 
 ### Citations
+If this code is helpful for your work, plese cite this
 
- @article{giang2021curvature,
-   title={Curvature-guided dynamic scale networks for Multi-view Stereo},
-  author={Giang, Khang Truong and Song, Soohwan and Jo, Sungho},
-  journal={arXiv preprint arXiv:2112.05999},
-  year={2021}
-}`
+    @article{giang2021curvature,
+      title={Curvature-guided dynamic scale networks for Multi-view Stereo},
+      author={Giang, Khang Truong and Song, Soohwan and Jo, Sungho},
+      journal={arXiv preprint arXiv:2112.05999},
+      year={2021}
+    }
