@@ -9,7 +9,7 @@ Our method can perform reconstruction in real-time due to fast run-time and low-
 
 ## TODO List
 - [x] Make repo clean
-- [x] Upload [all pretrained models](pretrained/), [DTU](https://kaist.gov-dooray.com/share/drive-files/kkmh2qu2awzo.ilfnXskMRIeGeWKmUj1XAQ) and [TanksandTemples](https://kaist.gov-dooray.com/share/drive-files/kkmh2qu2awzo.ptZ1DiyZRuC6NaHSAs3a0A) pointclouds.
+- [x] Upload [all pretrained models](pretrained/), [DTU](https://kaist.gov-dooray.com/share/drive-files/kkmh2qu2awzo.er70beOnTO64mUhhGH81_A) and [TanksandTemples](https://kaist.gov-dooray.com/share/drive-files/kkmh2qu2awzo.ptZ1DiyZRuC6NaHSAs3a0A) pointclouds.
 
 ## Requirements
     conda create -n venv python=3.6
