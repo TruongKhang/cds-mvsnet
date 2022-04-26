@@ -88,3 +88,14 @@ If this code is helpful for your work, plese cite this
       journal={arXiv preprint arXiv:2112.05999},
       year={2021}
     }
+    
+or
+
+    @inproceedings{
+      giang2022curvatureguided,
+      title={{CURVATURE}-{GUIDED} {DYNAMIC} {SCALE} {NETWORKS} {FOR} {MULTI}-{VIEW}  {STEREO}},
+      author={Khang Truong Giang and Soohwan Song and Sungho Jo},
+      booktitle={International Conference on Learning Representations},
+      year={2022},
+      url={https://openreview.net/forum?id=_Wzj0J2xs2D}
+    }
