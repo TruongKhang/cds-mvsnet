@@ -1,7 +1,7 @@
 # [ICLR2022] CDS-MVSNet
 This is an official implementation of our paper [Curvature-guided dynamic scale networks for multi-view stereo](https://arxiv.org/pdf/2112.05999.pdf), which was accepted at ICLR 2022.
 
-Our method can perform reconstruction in real-time due to fast run-time and low-memory consumption. Here is a demo with the input video captured by a smartphone. We applied a SLAM method for camera pose estimation and then used CDS-MVSNet for dense reconstruction.
+Our method can perform reconstruction in real-time due to fast run-time and low-memory consumption. Here is a demo with the input video captured by a smartphone. We applied a SLAM method for camera pose estimation and then used CDS-MVSNet for dense reconstruction (code is [here](https://github.com/TruongKhang/DROID-SLAM)).
 
 ![Alt Text](demo.gif)
 
@@ -78,6 +78,13 @@ Submit the results to the [Tanks & Temples benchmark website](https://www.tanksa
 Due to large point clouds generated, user may need a NVIDIA card with high memory.
 
 We made the results publicly available on the leaderboard of Tanks & Temples.
+
+
+### Some notes about preparation to test on your custom datasets
+
+- Please prepare your datasets similar to DTU evaluation set or Tanks&Temples dataset provided above.
+
+- If the range value of your depths is large, the number of depth hypothesis planes should be high. You should change your `--numdepth` and the depth planes for all stages in file [config](https://github.com/TruongKhang/cds-mvsnet/blob/main/pretrained/both_dtu_blended/config.json). For example, using total of 512 depth planes with `--numdepth` then the depth planes for all stages should be [128, 32, 8]). 
 
 ### Citations
 If this code is helpful for your work, plese cite this
