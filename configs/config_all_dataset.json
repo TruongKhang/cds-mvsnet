@@ -1,9 +1,9 @@
 {
-    "name": "TAMVS",
+    "name": "CDS-MVSNet",
     "n_gpu": 2,
 
     "arch": {
-        "type": "TAMVSNet",
+        "type": "CDSMVSNet",
         "args": {
             "refine": true,
             "ndepths": [48, 32, 8],
