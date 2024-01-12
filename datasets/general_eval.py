@@ -69,8 +69,6 @@ class MVSDataset(Dataset):
         extrinsics = np.fromstring(' '.join(lines[1:5]), dtype=np.float32, sep=' ').reshape((4, 4))
         # intrinsics: line [7-10), 3x3 matrix
         intrinsics = np.fromstring(' '.join(lines[7:10]), dtype=np.float32, sep=' ').reshape((3, 3))
-        if self.kwargs["dataset"] == "tt":
-            intrinsics[1, 2] += 4
         intrinsics[:2, :] /= 4.0
         # depth_min & depth_interval: line 11
         depth_min = float(lines[11].split()[0])
@@ -89,8 +87,6 @@ class MVSDataset(Dataset):
         img = Image.open(filename)
         # scale 0~255 to 0~1
         np_img = np.array(img, dtype=np.float32) / 255.
-        if self.kwargs["dataset"] == "tt":
-            np_img = np.pad(np_img, ((4, 4), (0, 0), (0, 0)), 'edge')
 
         #h, w = np_img.shape[:2]
         #np_img = cv2.resize(np_img, (w//2, h//2), interpolation=cv2.INTER_NEAREST)
@@ -99,14 +95,14 @@ class MVSDataset(Dataset):
 
     def scale_mvs_input(self, img, intrinsics, max_w, max_h, base=64):
         h, w = img.shape[:2]
-        # if h > max_h or w > max_w:
-        #     scale = 1.0 * max_h / h
-        #     if scale * w > max_w:
-        #         scale = 1.0 * max_w / w
-        #     new_w, new_h = scale * w // base * base, scale * h // base * base
-        # else:
-        #     new_w, new_h = 1.0 * w // base * base, 1.0 * h // base * base
-        new_h, new_w = max_h, max_w
+        if h > max_h or w > max_w:
+            scale = 1.0 * max_h / h
+            if scale * w > max_w:
+                scale = 1.0 * max_w / w
+            new_w, new_h = scale * w // base * base, scale * h // base * base
+        else:
+            new_w, new_h = 1.0 * w // base * base, 1.0 * h // base * base
+        # new_h, new_w = max_h, max_w
 
         scale_w = 1.0 * new_w / w
         scale_h = 1.0 * new_h / h
