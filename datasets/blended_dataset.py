@@ -3,6 +3,8 @@ import os, cv2, time
 from PIL import Image, ImageOps
 from datasets.data_io import *
 
+from .utils import ImgAug
+
 
 class BlendedMVSDataset(Dataset):
     def __init__(self, datapath, listfile, mode, nviews, ndepths=192, interval_scale=1.06, **kwargs):
@@ -14,6 +16,7 @@ class BlendedMVSDataset(Dataset):
         self.ndepths = ndepths
         self.interval_scale = interval_scale
         self.kwargs = kwargs
+        self.img_aug = ImgAug()
 
         assert self.mode in ["train", "val", "test"]
         self.metas = self.build_list()
@@ -36,9 +39,10 @@ class BlendedMVSDataset(Dataset):
                 for view_idx in range(num_viewpoint):
                     ref_view = int(f.readline().rstrip())
                     src_views = [int(x) for x in f.readline().rstrip().split()[1::2]]
+                    src_views = [v for v in src_views if v != ref_view]
 
                     # filter by no src view and fill to nviews
-                    if len(src_views) > 0:
+                    if len(src_views) > 2:
                         if len(src_views) < self.nviews:
                             print("{}< num_views:{}".format(len(src_views), self.nviews))
                             src_views += [src_views[0]] * (self.nviews - len(src_views))
@@ -60,8 +64,8 @@ class BlendedMVSDataset(Dataset):
         extrinsics = np.fromstring(' '.join(lines[1:5]), dtype=np.float32, sep=' ').reshape((4, 4))
         # intrinsics: line [7-10), 3x3 matrix
         intrinsics = np.fromstring(' '.join(lines[7:10]), dtype=np.float32, sep=' ').reshape((3, 3))
-        #intrinsics[0, 2] -= 64.0
-        #intrinsics[1, 2] -= 32.0
+        # intrinsics[0, 2] -= 64.0
+        # intrinsics[1, 2] -= 32.0
         intrinsics[:2, :] /= 4.0
         # depth_min & depth_interval: line 11
         depth_min = float(lines[11].split()[0])
@@ -78,46 +82,86 @@ class BlendedMVSDataset(Dataset):
 
     def prepare_img(self, img):
         h, w = img.shape[:2]
-        target_h, target_w = 576, 768 #512, 640
+        target_h, target_w = 576, 768
         start_h, start_w = (h - target_h)//2, (w - target_w)//2
         img_crop = img[start_h: start_h + target_h, start_w: start_w + target_w]
         return img_crop
 
-    def read_img(self, filename):
-        img = Image.open(filename)
+    def read_img(self, filename, augmentation=False):
+        # img = Image.open(filename)
+        img = cv2.imread(filename, cv2.IMREAD_COLOR)
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        if augmentation:
+            img = self.img_aug(img)
         # scale 0~255 to 0~1
         np_img = np.array(img, dtype=np.float32) / 255.
         np_img = self.prepare_img(np_img)
 
         return np_img
 
-    def read_depth(self, filename):
+    def read_depth(self, filename, new_h, new_w):
         # read pfm depth file
         depth = np.array(read_pfm(filename)[0], dtype=np.float32)
         depth = self.prepare_img(depth)
+        depth = cv2.resize(depth, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
+
         h, w = depth.shape
-        depth_ms = {
-            "stage1": cv2.resize(depth, (w // 8, h // 8), interpolation=cv2.INTER_NEAREST),
-            "stage2": cv2.resize(depth, (w // 4, h // 4), interpolation=cv2.INTER_NEAREST),
-            "stage3": cv2.resize(depth, (w // 2, h // 2), interpolation=cv2.INTER_NEAREST),
-            "stage4": depth,
-        }
+        
+        if self.kwargs["num_stages"] == 4:
+            depth_ms = {
+                "stage1": cv2.resize(depth, (w // 8, h // 8), interpolation=cv2.INTER_NEAREST),
+                "stage2": cv2.resize(depth, (w // 4, h // 4), interpolation=cv2.INTER_NEAREST),
+                "stage3": cv2.resize(depth, (w // 2, h // 2), interpolation=cv2.INTER_NEAREST),
+                "stage4": depth,
+            }
+        else:
+            depth_ms = {
+                "stage1": cv2.resize(depth, (w // 4, h // 4), interpolation=cv2.INTER_NEAREST),
+                "stage2": cv2.resize(depth, (w // 2, h // 2), interpolation=cv2.INTER_NEAREST),
+                "stage3": depth,
+            }
 
         return depth_ms
 
-    def read_mask(self, filename):
+    def read_mask(self, filename, new_h, new_w):
         depth = np.array(read_pfm(filename)[0], dtype=np.float32)
         np_img = (depth > 0).astype(np.float32)
         np_img = self.prepare_img(np_img)
-        # np_img = cv2.resize(np_img, (768, 576), interpolation=cv2.INTER_NEAREST)
+        np_img = cv2.resize(np_img, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
+
         h, w = np_img.shape
-        np_img_ms = {
-            "stage1": cv2.resize(np_img, (w//8, h//8), interpolation=cv2.INTER_NEAREST),
-            "stage2": cv2.resize(np_img, (w//4, h//4), interpolation=cv2.INTER_NEAREST),
-            "stage3": cv2.resize(np_img, (w//2, h//2), interpolation=cv2.INTER_NEAREST),
-            "stage4": np_img,
-        }
+        if self.kwargs["num_stages"] == 4:
+            np_img_ms = {
+                "stage1": cv2.resize(np_img, (w//8, h//8), interpolation=cv2.INTER_NEAREST),
+                "stage2": cv2.resize(np_img, (w//4, h//4), interpolation=cv2.INTER_NEAREST),
+                "stage3": cv2.resize(np_img, (w//2, h//2), interpolation=cv2.INTER_NEAREST),
+                "stage4": np_img,
+            }
+        else:
+            np_img_ms = {
+                "stage1": cv2.resize(np_img, (w//4, h//4), interpolation=cv2.INTER_NEAREST),
+                "stage2": cv2.resize(np_img, (w//2, h//2), interpolation=cv2.INTER_NEAREST),
+                "stage3": np_img,
+            }
         return np_img_ms
+
+    def scale_img_cam(self, img, intrinsics, max_h, base=64):
+        h, w = img.shape[:2]
+        if h > max_h:
+            max_w = w * max_h / h
+            new_w, new_h = max_w // base * base, max_h // base * base
+        else:
+            new_w, new_h = w // base * base, h // base * base
+
+        scale_w = 1.0 * new_w / w
+        scale_h = 1.0 * new_h / h
+
+        intrinsics[0, :] *= scale_w
+        intrinsics[1, :] *= scale_h
+
+        img = cv2.resize(img, (int(new_w), int(new_h)))
+
+        return img, intrinsics, int(new_h), int(new_w)
 
     def __getitem__(self, idx):
         # global s_h, s_w
@@ -141,8 +185,11 @@ class BlendedMVSDataset(Dataset):
             depth_filename = os.path.join(self.datapath, '{}/rendered_depth_maps/{:0>8}.pfm'.format(scan, vid))
             mask_filename = os.path.join(self.datapath, '{}/rendered_depth_maps/{:0>8}.pfm'.format(scan, vid))
 
-            img = self.read_img(img_filename)
+            img = self.read_img(img_filename, augmentation=True if self.mode == "train" else False)
             intrinsics, extrinsics, depth_min, depth_interval = self.read_cam_file(proj_mat_filename)
+
+            img, intrinsics, scaled_h, scaled_w = self.scale_img_cam(img, intrinsics, max_h=512)
+
             proj_mat = np.zeros(shape=(2, 4, 4), dtype=np.float32)  #
             proj_mat[0, :4, :4] = extrinsics
             proj_mat[1, :3, :3] = intrinsics
@@ -150,8 +197,8 @@ class BlendedMVSDataset(Dataset):
             proj_matrices.append(proj_mat)
 
             if i == 0:  # reference view
-                mask_read_ms = self.read_mask(mask_filename)
-                depth_ms = self.read_depth(depth_filename)
+                mask_read_ms = self.read_mask(mask_filename, scaled_h, scaled_w)
+                depth_ms = self.read_depth(depth_filename, scaled_h, scaled_w)
 
                 # get depth values
                 depth_max = depth_interval * (self.ndepths - 0.5) + depth_min
@@ -173,16 +220,25 @@ class BlendedMVSDataset(Dataset):
         stage0_pjmats = proj_matrices.copy()
         stage0_pjmats[:, 1, :2, :] = proj_matrices[:, 1, :2, :] * 0.5
 
-        proj_matrices_ms = {
-            "stage1": stage0_pjmats,
-            "stage2": proj_matrices,
-            "stage3": stage2_pjmats,
-            "stage4": stage3_pjmats
-        }
+        if self.kwargs["num_stages"] == 4:
+            proj_matrices_ms = {
+                "stage1": stage0_pjmats,
+                "stage2": proj_matrices,
+                "stage3": stage2_pjmats,
+                "stage4": stage3_pjmats
+            }
+        else:
+            proj_matrices_ms = {
+                "stage1": proj_matrices,
+                "stage2": stage2_pjmats,
+                "stage3": stage3_pjmats
+            }
 
         return {"imgs": imgs,
                 "proj_matrices": proj_matrices_ms,
                 "depth": depth_ms,
                 "depth_values": depth_values,
                 "mask": mask,
-                "filename": scan + '/{}/' + '{:0>8}'.format(view_ids[0]) + "{}"}
+                "filename": scan + '/{}/' + '{:0>8}'.format(view_ids[0]) + "{}",
+                "dataset_name": "blendedmvs",
+                }

@@ -1,0 +1,11 @@
+courtyard
+electro
+office
+playground
+relief_2
+terrains
+delivery_area
+meadow 
+pipes
+relief
+terrace

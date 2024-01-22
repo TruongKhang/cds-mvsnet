@@ -11,7 +11,7 @@ def final_loss(inputs, depth_gt_ms, mask_ms, **kwargs):
     total_loss = torch.tensor(0.0, dtype=torch.float32, device=mask_ms["stage1"].device, requires_grad=False)
     depth_loss = 0.0
 
-    for (stage_inputs, stage_key) in [(inputs[k], k) for k in ["stage1", "stage2", "stage3"]]: # inputs.keys() if "stage" in k]:
+    for (stage_inputs, stage_key) in [(inputs[k], k) for k in inputs.keys() if "stage" in k]:
         depth_est = stage_inputs["depth"] / depth_interval
         depth_gt = depth_gt_ms[stage_key] / depth_interval
         mask = mask_ms[stage_key]
@@ -37,12 +37,5 @@ def final_loss(inputs, depth_gt_ms, mask_ms, **kwargs):
             total_loss = total_loss + depth_loss_weights[stage_idx] * (depth_loss + 5 * feat_loss + 0.1*norm_curv_reg)
         else:
             total_loss += 1.0 * (depth_loss+ 5 * feat_loss + 0.1*norm_curv_reg)
-
-    if "refined_depth" in inputs:
-        depth_gt = depth_gt_ms["stage4"] / depth_interval
-        depth_est = inputs["refined_depth"] / depth_interval
-        mask = mask_ms["stage4"] > 0.5
-        depth_loss = F.smooth_l1_loss(depth_est[mask], depth_gt[mask], reduction='mean')
-        total_loss = total_loss + 2*depth_loss
 
     return total_loss, depth_loss

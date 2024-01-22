@@ -215,7 +215,7 @@ def save_depth(testlist, config):
                                                       outputs["refined_depth"][0].shape))
 
             # save depth maps and confidence maps
-            for filename, cam, img, depth_est, conf_stage1, conf_stage2, conf_stage3 in zip(filenames, cams, imgs, outputs["refined_depth"], outputs["stage1"]["photometric_confidence"], outputs["stage2"]["photometric_confidence"],
+            for filename, cam, img, depth_est, conf_stage1, conf_stage2, conf_stage3 in zip(filenames, cams, imgs, outputs["out_depth"], outputs["stage1"]["photometric_confidence"], outputs["stage2"]["photometric_confidence"],
                                                                              outputs["photometric_confidence"]): #, outputs["ps_map"]):
                 img = img[0]  # ref view
                 cam = cam[0]  # ref cam

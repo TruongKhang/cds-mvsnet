@@ -5,8 +5,8 @@
     "arch": {
         "type": "CDSMVSNet",
         "args": {
-            "refine": true,
-            "ndepths": [48, 32, 8],
+            "refine": false,
+            "ndepths": [64, 32, 8],
             "depth_interals_ratio": [4.0, 2.0, 1.0],
             "share_cr": false,
             "cr_base_chs": [8, 8, 8],
@@ -22,10 +22,9 @@
           "val_data_list": "lists/dtu/val.txt",
           "mode": "train",
           "num_srcs": 3,
-          "num_depths": 192,
-          "interval_scale": 1.06,
+          "num_depths": 256,
+          "interval_scale": 0.8,
           "shuffle": true,
-          "seq_size": 7,
           "batch_size": 6
         }
       },
@@ -37,44 +36,33 @@
           "val_data_list": "lists/blended/validation_list.txt",
           "mode": "train",
           "num_srcs": 3,
-          "num_depths": 192,
+          "num_depths": 256,
           "interval_scale": 1.0,
           "shuffle": true,
-          "seq_size": 7,
           "batch_size": 6
         }
       }
     ],
     "optimizer": {
-        "type": "SGD",
+        "type": "AdamW",
         "args":{
-            "lr": 0.01,
+            "lr": 0.001,
             "weight_decay": 0.01
         }
     },
     "loss": "final_loss",
-    "metrics": [
-        "mae", "rmse", "mre"
-    ],
     "lr_scheduler": {
         "type": "StepLR",
         "args": {
-            "step_size": 3,
+            "step_size": 5,
             "gamma": 0.5
         }
     },
     "trainer": {
-        "epochs": 30,
-        "seq": true,
-        "save_dir": "saved/",
-        "save_period": 1,
-        "verbosity": 2,
-        "logging_every": 100,
-        "early_stop": 20,
-        "tensorboard": false,
+        "epochs": 35,
         "depth_scale": 1.0,
-        "lrepochs": "5,10,15:2",
         "dlossw": [0.5, 1.0, 2.0],
-        "eval_freq": 1
+        "eval_freq": 1,
+        "save_dir": "dtu_blended_mvs"
     }
 }

@@ -185,7 +185,7 @@ class MVSDataset(Dataset):
         stage0_pjmats = proj_matrices.copy()
         stage0_pjmats[:, 1, :2, :] = proj_matrices[:, 1, :2, :] * 0.5
 
-        if self.kwargs["refine"]:
+        if self.kwargs["num_stages"] == 4:
             proj_matrices_ms = {
                 "stage1": stage0_pjmats,
                 "stage2": proj_matrices,

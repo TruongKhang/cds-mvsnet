@@ -44,7 +44,7 @@ class StageNet(nn.Module):
             warped_volume = homo_warping_3D(src_fea, src_proj_new, ref_proj_new, depth_values)
 
             ref_volume = ref_fea.unsqueeze(2).repeat(1, 1, num_depth, 1, 1)
-            in_prod_vol = ref_volume * warped_volume
+            in_prod_vol = ref_volume * warped_volume # / (ref_volume.shape[1] ** 0.5)
             sim_vol = in_prod_vol.sum(dim=1)
             sim_vol_norm = F.softmax(sim_vol.detach(), dim=1)
             entropy = (- sim_vol_norm * torch.log(sim_vol_norm)).sum(dim=1, keepdim=True)
@@ -95,61 +95,76 @@ class StageNet(nn.Module):
 
 
 class CDSMVSNet(nn.Module):
-    def __init__(self, refine=False, ndepths=(48, 32, 8), depth_interals_ratio=(4, 2, 1), share_cr=False,
-                 grad_method="detach", arch_mode="fpn", cr_base_chs=(8, 8, 8)):
+    def __init__(self, num_stages=3, ndepths=(48, 32, 8), depth_interals_ratio=(4, 2, 1), share_cr=False,
+                 grad_method="detach", cr_base_chs=(8, 8, 8)):
         super(CDSMVSNet, self).__init__()
-        self.refine = refine
         self.share_cr = share_cr
         self.ndepths = ndepths
         self.depth_interals_ratio = depth_interals_ratio
         self.grad_method = grad_method
-        self.arch_mode = arch_mode
         self.cr_base_chs = cr_base_chs
-        self.num_stage = len(ndepths)
+        self.num_stages = num_stages
 
         print("**********netphs:{}, depth_intervals_ratio:{},  grad:{}, chs:{}************".format(ndepths,
               depth_interals_ratio, self.grad_method, self.cr_base_chs))
 
         assert len(ndepths) == len(depth_interals_ratio)
 
-        self.stage_infos = {
-            "stage1":{
-                "scale": 4.0,
-            },
-            "stage2": {
-                "scale": 2.0,
-            },
-            "stage3": {
-                "scale": 1.0,
+        if self.num_stages == 3:
+            self.stage_infos = {
+                "stage1":{
+                    "scale": 4.0,
+                },
+                "stage2": {
+                    "scale": 2.0,
+                },
+                "stage3": {
+                    "scale": 1.0,
+                }
             }
-        }
+            cost_reg_levels = [3, 3, 3]
+        else:
+            self.stage_infos = {
+                "stage1":{
+                    "scale": 8.0,
+                },
+                "stage2": {
+                    "scale": 4.0,
+                },
+                "stage3": {
+                    "scale": 2.0,
+                },
+                "stage4": {
+                    "scale": 1.0,
+                }
+            }
+            cost_reg_levels = [3, 3, 3, 2]
 
-        self.feature = FeatureNet(base_channels=8, arch_mode=self.arch_mode)
+        self.feature = FeatureNet(base_channels=8)
+        # for p in self.feature.parameters():
+        #     p.requires_grad = False
         self.stage_net = StageNet(num_mvs_stages=len(ndepths))
         if self.share_cr:
             self.cost_regularization = CostRegNet(in_channels=self.feature.out_channels, base_channels=8)
         else:
+            
             self.cost_regularization = nn.ModuleList([CostRegNet(in_channels=self.feature.out_channels[i],
-                                                                 base_channels=self.cr_base_chs[i])
-                                                      for i in range(self.num_stage)])
+                                                                 base_channels=self.cr_base_chs[i], n_levels=cost_reg_levels[i])
+                                                      for i in range(self.num_stages)])
         #self.depth_params = list(self.cost_regularization.parameters()) + list(self.stage_net.parameters())
-        if self.refine:
-            self.refine_network = Refinement()
-            #self.depth_params += list(self.refine_network.parameters())
 
     def forward(self, imgs, proj_matrices, depth_values, gt_depths=None, temperature=0.001):
         depth_min = depth_values[:, [0]].unsqueeze(-1).unsqueeze(-1) #float(depth_values[0, 0].cpu().numpy())
         depth_max = depth_values[:, [-1]].unsqueeze(-1).unsqueeze(-1) #float(depth_values[0, -1].cpu().numpy())
         depth_interval = (depth_values[:, 1] - depth_values[:, 0]).unsqueeze(-1).unsqueeze(-1) #(depth_max - depth_min) / depth_values.size(1)
 
-        batch_size, nviews, height, width = imgs.shape[0], imgs.shape[1], imgs.shape[3], imgs.shape[4]
-        if self.refine:
-            height, width = height // 2, width // 2
+        batch_size, height, width = imgs.shape[0], imgs.shape[3], imgs.shape[4]
+
         # step 1. feature extraction
         features = []
         list_imgs = torch.unbind(imgs, dim=1)
         ref_img, src_imgs = list_imgs[0], list_imgs[1:]
-        cam_params = torch.unbind(proj_matrices["stage3"], dim=1)
+        cam_params = torch.unbind(proj_matrices[f"stage{self.num_stages}"], dim=1)
         ref_proj, src_projs = cam_params[0], cam_params[1:]
         for src_img, src_proj in zip(src_imgs, src_projs):  #imgs shape (B, N, C, H, W)
             # compute epipoles
@@ -162,16 +177,16 @@ class CDSMVSNet(nn.Module):
 
         outputs = {}
         depth, cur_depth = None, None
-        for stage_idx in range(self.num_stage):
+        for stage_idx in range(self.num_stages):
             # print("*********************stage{}*********************".format(stage_idx + 1))
             #stage feature, proj_mats, scales
             stage_name = "stage{}".format(stage_idx + 1)
             features_stage = [{"ref": feat["ref"][stage_name], "src": feat["src"][stage_name]} for feat in features]
             # features_stage = [feat[stage_name] for feat in features]
-            proj_matrices_stage = proj_matrices["stage{}".format(stage_idx + 1)]
-            stage_scale = self.stage_infos["stage{}".format(stage_idx + 1)]["scale"]
+            proj_matrices_stage = proj_matrices[stage_name]
+            stage_scale = self.stage_infos[stage_name]["scale"]
             gt_depth_stage = gt_depths[stage_name].unsqueeze(1) if gt_depths is not None else None
-            di_stage = depth_interval.unsqueeze(1) * stage_scale
+            di_stage = depth_interval.unsqueeze(1) * self.depth_interals_ratio[stage_idx]
 
             if depth is not None:
                 if self.grad_method == "detach":
@@ -202,23 +217,14 @@ class CDSMVSNet(nn.Module):
             if gt_depths is not None:
                 target = (depth_samples - gt_depth_stage).abs() / di_stage
                 # target = (feat_depth_samples - gt_depth_stage).abs() / di_stage
-                target = (target < 0.5 / stage_scale).float()
+                target = (target < 0.5).float()
                 target = torch.cat((target, torch.ones_like(gt_depth_stage)), dim=1)
                 outputs_stage.update({"feat_target": target})
 
             outputs["stage{}".format(stage_idx + 1)] = outputs_stage
             outputs.update(outputs_stage)
 
-        # depth map refinement
-        if self.refine:
-            depth_min, depth_max = depth_values[:, 0], depth_values[:, -1]
-            cur_depth = depth.detach() / depth_interval
-            depth_min = depth_min / depth_interval[:, 0, 0]
-            depth_max = depth_max / depth_interval[:, 0, 0]
-            refined_depth = self.refine_network(ref_img, cur_depth.unsqueeze(1), depth_min, depth_max)
-            outputs["refined_depth"] = refined_depth.squeeze(1) * depth_interval
-        else:
-            outputs["refined_depth"] = depth
+        outputs["out_depth"] = depth
 
         return outputs
 

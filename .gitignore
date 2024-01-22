@@ -136,3 +136,5 @@ tt_outputs
 move.py
 *.ckpt
 *.pth
+logs/
+pretrained/
