@@ -45,7 +45,11 @@ def compute_epipole(Fmatrix):
     eq1 = c * Fmatrix[:, 0] + Fmatrix[:, 1] + Fmatrix[:, 2] # [B, 3]
     eq2 = c * Fmatrix[:, 0] - Fmatrix[:, 1] - Fmatrix[:, 2] # [B, 3]
     eq = torch.stack((eq1, eq2), dim=1) # [B, 2, 3]
-    epipole = - torch.inverse(eq[:, :, :2]) @ eq[:, :, [2]] # [B, 2, 1]
+    try:
+        epipole = - torch.inverse(eq[:, :, :2]) @ eq[:, :, [2]] # [B, 2, 1]
+    except:
+        print("fundamental matrix: ", Fmatrix)
+        print(eq[:, :, :2])
     return epipole.squeeze(2)
 
 
@@ -80,18 +84,61 @@ class GaussFilter2d(nn.Module):
         return dx.unsqueeze(1), dy.unsqueeze(1), dxx.unsqueeze(1), dxy.unsqueeze(1), dyy.unsqueeze(1)
 
 
+# class DynamicConv(nn.Module):
+#     def __init__(self, in_c, out_c, size_kernels=(3, 5, 7), stride=1, bias=True, thresh_scale=0.01, **kwargs):
+#         super(DynamicConv, self).__init__()
+#         self.size_kernels = size_kernels
+#         self.thresh_scale = thresh_scale
+#         self.att_convs = nn.ModuleList([nn.Conv2d(in_c, 3, k, padding=(k-1)//2, bias=False) for k in size_kernels])
+#         groups = in_c if in_c == out_c else 1
+#         self.convs = nn.ModuleList([nn.Conv2d(in_c, out_c, k, padding=(k-1)//2, stride=stride, bias=bias, groups=groups) for k in self.size_kernels])
+#         hidden_dim = kwargs.get("hidden_dim", 4)
+#         self.att_weights = nn.Sequential(nn.Conv2d(len(size_kernels), hidden_dim, 1, bias=False),
+#                                          LayerNorm(hidden_dim, data_format="channels_first"), # nn.BatchNorm2d(hidden_dim),
+#                                          nn.GELU(),
+#                                          nn.Conv2d(hidden_dim, len(size_kernels), 1, bias=False))
+
+#         for p in self.att_convs.parameters():
+#             torch.nn.init.normal_(p, std=0.1)
+
+#     def forward(self, feature_vol, epipole=None, temperature=0.001):
+#         # surface = feature_vol.mean(dim=1, keepdim=True)
+#         batch_size, height, width = feature_vol.shape[0], feature_vol.shape[2], feature_vol.shape[3]
+#         y, x = torch.meshgrid([torch.arange(0, height, dtype=torch.float32, device=feature_vol.device),
+#                                torch.arange(0, width, dtype=torch.float32, device=feature_vol.device)], indexing="ij")
+#         x, y = x.contiguous(), y.contiguous()
+#         epipole_map = epipole.unsqueeze(-1).unsqueeze(-1) # [B, 2, 1, 1]
+#         u = x.unsqueeze(0).unsqueeze(0) - epipole_map[:, [0], :, :] # [B, 1, H, W]
+#         v = y.unsqueeze(0).unsqueeze(0) - epipole_map[:, [1], :, :] # [B, 1, H, W]
+#         normed_uv = torch.sqrt(u**2 + v**2)
+#         u, v = u / (normed_uv + 1e-6), v / (normed_uv + 1e-6)
+
+#         curvs = []
+#         results = []
+#         for idx, s in enumerate(self.size_kernels):
+#             curv = self.att_convs[idx](feature_vol)
+#             curv = (curv * torch.cat((u**2, 2*u*v, v**2), dim=1)).sum(dim=1, keepdim=True)
+#             # w = self.att_weights[idx](feature_vol)
+#             curvs.append(curv) #.unsqueeze(1))
+#             results.append(self.convs[idx](feature_vol).unsqueeze(1))
+#         curvs = torch.cat(curvs, dim=1) # [B, num_kernels, H, W]
+#         weights = self.att_weights(curvs)
+#         weights = F.softmax(weights / temperature, dim=1)
+#         filtered_result = (torch.cat(results, dim=1) * weights.unsqueeze(2)).sum(dim=1)
+#         norm_curv = (curvs * weights).sum(dim=1, keepdim=True)
+#         return filtered_result, norm_curv #, sum_mask, t11, t12, t13
+    
 class DynamicConv(nn.Module):
     def __init__(self, in_c, out_c, size_kernels=(3, 5, 7), stride=1, bias=True, thresh_scale=0.01, **kwargs):
         super(DynamicConv, self).__init__()
         self.size_kernels = size_kernels
         self.thresh_scale = thresh_scale
         self.att_convs = nn.ModuleList([nn.Conv2d(in_c, 3, k, padding=(k-1)//2, bias=False) for k in size_kernels])
-        groups = in_c if in_c == out_c else 1
-        self.convs = nn.ModuleList([nn.Conv2d(in_c, out_c, k, padding=(k-1)//2, stride=stride, bias=bias, groups=groups) for k in self.size_kernels])
+        self.convs = nn.ModuleList([nn.Conv2d(in_c, out_c, k, padding=(k-1)//2, stride=stride, bias=bias) for k in self.size_kernels])
         hidden_dim = kwargs.get("hidden_dim", 4)
         self.att_weights = nn.Sequential(nn.Conv2d(len(size_kernels), hidden_dim, 1, bias=False),
-                                         LayerNorm(hidden_dim, data_format="channels_first"), # nn.BatchNorm2d(hidden_dim),
-                                         nn.GELU(),
+                                         nn.BatchNorm2d(hidden_dim),
+                                         nn.ReLU(inplace=True),
                                          nn.Conv2d(hidden_dim, len(size_kernels), 1, bias=False))
 
         for p in self.att_convs.parameters():

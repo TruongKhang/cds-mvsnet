@@ -8,7 +8,7 @@ from timm.models.layers import trunc_normal_, DropPath
 sys.path.append("..")
 
 from models.dynamic_conv import DynamicConv
-from models.convnext import LayerNorm
+from models.convnext import LayerNorm, LayerNorm3d
 
 
 def init_bn(module):
@@ -28,58 +28,6 @@ def init_uniform(module, init_method):
     return
 
 
-# class Conv2d(nn.Module):
-#     """Applies a 2D convolution (optionally with batch normalization and relu activation)
-#     over an input signal composed of several input planes.
-
-#     Attributes:
-#         conv (nn.Module): convolution module
-#         bn (nn.Module): batch normalization module
-#         relu (bool): whether to activate by relu
-
-#     Notes:
-#         Default momentum for batch normalization is set to be 0.01,
-
-#     """
-
-#     def __init__(self, in_channels, out_channels, kernel_size, stride=1,
-#                  relu=True, bn=True, bn_momentum=0.1, init_method="xavier", dynamic=False, **kwargs):
-#         super(Conv2d, self).__init__()
-
-#         if dynamic:
-#             self.conv = DynamicConv(in_channels, out_channels, size_kernels=kernel_size, stride=stride, bias=(not bn), **kwargs)
-#         else:
-#             self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, stride=stride, bias=(not bn), **kwargs)
-#         self.dynamic = dynamic
-#         self.kernel_size = kernel_size
-#         self.stride = stride
-#         self.bn = nn.InstanceNorm2d(out_channels, momentum=bn_momentum) if bn else None
-#         self.relu = relu
-
-#         # assert init_method in ["kaiming", "xavier"]
-#         # self.init_weights(init_method)
-
-#     def forward(self, x, epipole=None, temperature=0.001):
-#         if self.dynamic:
-#             #feat, epipole, temperature = x
-#             y, norm_curv = self.conv(x, epipole=epipole, temperature=temperature)
-#         else:
-#             y = self.conv(x)
-#         # y = self.conv(x)
-#         if self.bn is not None:
-#             y = self.bn(y)
-#         if self.relu:
-#             y = F.leaky_relu(y, 0.1, inplace=True)
-#         out = (y, norm_curv) if self.dynamic else y
-#         return out
-
-#     def init_weights(self, init_method):
-#         """default initialization"""
-#         init_uniform(self.conv, init_method)
-#         if self.bn is not None:
-#             init_bn(self.bn)
-
-
 class Conv2d(nn.Module):
     """Applies a 2D convolution (optionally with batch normalization and relu activation)
     over an input signal composed of several input planes.
@@ -95,48 +43,100 @@ class Conv2d(nn.Module):
     """
 
     def __init__(self, in_channels, out_channels, kernel_size, stride=1,
-                layer_scale_init_value=1e-6, res_op=True, dynamic=False, **kwargs):
+                 relu=True, bn=True, bn_momentum=0.1, init_method="xavier", dynamic=False, **kwargs):
         super(Conv2d, self).__init__()
 
         if dynamic:
-            self.conv = DynamicConv(in_channels, out_channels, size_kernels=kernel_size, stride=stride, bias=False, **kwargs)
+            self.conv = DynamicConv(in_channels, out_channels, size_kernels=kernel_size, stride=stride, bias=(not bn), **kwargs)
         else:
-            groups = in_channels if in_channels == out_channels else 1
-            self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, stride=stride, bias=False, groups=groups, **kwargs)
+            self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, stride=stride, bias=(not bn), **kwargs)
         self.dynamic = dynamic
+        self.kernel_size = kernel_size
+        self.stride = stride
+        self.bn = nn.BatchNorm2d(out_channels, momentum=bn_momentum) if bn else None
+        self.relu = relu
 
-        self.norm = LayerNorm(out_channels, eps=1e-6)
-        self.pwconv1 = nn.Linear(out_channels, 2 * out_channels) # pointwise/1x1 convs, implemented with linear layers
-        self.act = nn.GELU()
-        self.pwconv2 = nn.Linear(2 * out_channels, out_channels)
-        self.gamma = nn.Parameter(layer_scale_init_value * torch.ones((out_channels)), 
-                                    requires_grad=True) if layer_scale_init_value > 0 else None
-        self.res_op = res_op
+        # assert init_method in ["kaiming", "xavier"]
+        # self.init_weights(init_method)
 
     def forward(self, x, epipole=None, temperature=0.001):
-        input = x
         if self.dynamic:
             #feat, epipole, temperature = x
-            x, norm_curv = self.conv(x, epipole=epipole, temperature=temperature)
+            y, norm_curv = self.conv(x, epipole=epipole, temperature=temperature)
         else:
-            x = self.conv(x)
-        
-        x = x.permute(0, 2, 3, 1) # (N, C, H, W) -> (N, H, W, C)
-        x = self.norm(x)
-        x = self.pwconv1(x)
-        x = self.act(x)
-        x = self.pwconv2(x)
-        if self.gamma is not None:
-            x = self.gamma * x
-        x = x.permute(0, 3, 1, 2) # (N, H, W, C) -> (N, C, H, W)
-        x = input + x if self.res_op else x
-
-        out = (x, norm_curv) if self.dynamic else x
+            y = self.conv(x)
+        # y = self.conv(x)
+        if self.bn is not None:
+            y = self.bn(y)
+        if self.relu:
+            y = F.leaky_relu(y, 0.1, inplace=True)
+        out = (y, norm_curv) if self.dynamic else y
         return out
 
-    def _init_weights(self, m):
-        if isinstance(m, (nn.Conv2d, nn.Linear)):
-            nn.init.trunc_normal_(m.weight, std=.02)
+    def init_weights(self, init_method):
+        """default initialization"""
+        init_uniform(self.conv, init_method)
+        if self.bn is not None:
+            init_bn(self.bn)
+
+
+# class Conv2d(nn.Module):
+#     """Applies a 2D convolution (optionally with batch normalization and relu activation)
+#     over an input signal composed of several input planes.
+
+#     Attributes:
+#         conv (nn.Module): convolution module
+#         bn (nn.Module): batch normalization module
+#         relu (bool): whether to activate by relu
+
+#     Notes:
+#         Default momentum for batch normalization is set to be 0.01,
+
+#     """
+
+#     def __init__(self, in_channels, out_channels, kernel_size, stride=1,
+#                 layer_scale_init_value=0, res_op=True, dynamic=False, **kwargs):
+#         super(Conv2d, self).__init__()
+
+#         if dynamic:
+#             self.conv = DynamicConv(in_channels, out_channels, size_kernels=kernel_size, stride=stride, bias=False, **kwargs)
+#         else:
+#             groups = in_channels if in_channels == out_channels else 1
+#             self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, stride=stride, bias=False, groups=groups, **kwargs)
+#         self.dynamic = dynamic
+
+#         self.norm = LayerNorm(out_channels, eps=1e-6)
+#         self.pwconv1 = nn.Linear(out_channels, 2 * out_channels) # pointwise/1x1 convs, implemented with linear layers
+#         self.act = nn.GELU()
+#         self.pwconv2 = nn.Linear(2 * out_channels, out_channels)
+#         self.gamma = nn.Parameter(layer_scale_init_value * torch.ones((out_channels)), 
+#                                     requires_grad=True) if layer_scale_init_value > 0 else None
+#         self.res_op = res_op
+
+#     def forward(self, x, epipole=None, temperature=0.001):
+#         input = x
+#         if self.dynamic:
+#             #feat, epipole, temperature = x
+#             x, norm_curv = self.conv(x, epipole=epipole, temperature=temperature)
+#         else:
+#             x = self.conv(x)
+        
+#         x = x.permute(0, 2, 3, 1) # (N, C, H, W) -> (N, H, W, C)
+#         x = self.norm(x)
+#         x = self.pwconv1(x)
+#         x = self.act(x)
+#         x = self.pwconv2(x)
+#         if self.gamma is not None:
+#             x = self.gamma * x
+#         x = x.permute(0, 3, 1, 2) # (N, H, W, C) -> (N, C, H, W)
+#         x = input + x if self.res_op else x
+
+#         out = (x, norm_curv) if self.dynamic else x
+#         return out
+
+#     def _init_weights(self, m):
+#         if isinstance(m, (nn.Conv2d, nn.Linear)):
+#             nn.init.trunc_normal_(m.weight, std=.02)
 
 
 class Conv3d(nn.Module):
@@ -154,7 +154,7 @@ class Conv3d(nn.Module):
     """
 
     def __init__(self, in_channels, out_channels, kernel_size=3, stride=1,
-                 relu=True, bn=True, bn_momentum=0.1, init_method="xavier", **kwargs):
+                 act=True, norm=True, bn_momentum=0.1, init_method="xavier", **kwargs):
         super(Conv3d, self).__init__()
         self.out_channels = out_channels
         self.kernel_size = kernel_size
@@ -162,26 +162,17 @@ class Conv3d(nn.Module):
         self.stride = stride
 
         self.conv = nn.Conv3d(in_channels, out_channels, kernel_size, stride=stride,
-                              bias=(not bn), **kwargs)
-        self.bn = nn.BatchNorm3d(out_channels, momentum=bn_momentum) if bn else None
-        self.relu = relu
-
-        # assert init_method in ["kaiming", "xavier"]
-        # self.init_weights(init_method)
+                              bias=(not norm), **kwargs)
+        self.norm = nn.BatchNorm3d(out_channels, momentum=bn_momentum) if norm else None
+        self.act = nn.GELU() if act else None
 
     def forward(self, x):
         x = self.conv(x)
-        if self.bn is not None:
-            x = self.bn(x)
-        if self.relu:
-            x = F.relu(x, inplace=True)
+        if self.norm is not None:
+            x = self.norm(x)
+        if self.act is not None:
+            x = self.act(x)
         return x
-
-    def init_weights(self, init_method):
-        """default initialization"""
-        init_uniform(self.conv, init_method)
-        if self.bn is not None:
-            init_bn(self.bn)
 
 
 class Deconv3d(nn.Module):
@@ -199,33 +190,24 @@ class Deconv3d(nn.Module):
        """
 
     def __init__(self, in_channels, out_channels, kernel_size=3, stride=1,
-                 relu=True, bn=True, bn_momentum=0.1, init_method="xavier", **kwargs):
+                 act=True, norm=True, bn_momentum=0.1, **kwargs):
         super(Deconv3d, self).__init__()
         self.out_channels = out_channels
         assert stride in [1, 2]
         self.stride = stride
 
         self.conv = nn.ConvTranspose3d(in_channels, out_channels, kernel_size, stride=stride,
-                                       bias=(not bn), **kwargs)
-        self.bn = nn.BatchNorm3d(out_channels, momentum=bn_momentum) if bn else None
-        self.relu = relu
-
-        # assert init_method in ["kaiming", "xavier"]
-        # self.init_weights(init_method)
+                                       bias=(not norm), **kwargs)
+        self.norm = nn.BatchNorm3d(out_channels, momentum=bn_momentum) if norm else None
+        self.act = nn.GELU() if act else None
 
     def forward(self, x):
         x = self.conv(x)
-        if self.bn is not None:
-            x = self.bn(x)
-        if self.relu:
-            x = F.relu(x, inplace=True)
+        if self.norm is not None:
+            x = self.norm(x)
+        if self.act is not None:
+            x = self.act(x)
         return x
-
-    def init_weights(self, init_method):
-        """default initialization"""
-        init_uniform(self.conv, init_method)
-        if self.bn is not None:
-            init_bn(self.bn)
 
 
 class ConvBnReLU(nn.Module):
@@ -261,45 +243,49 @@ class ConvBnReLU(nn.Module):
 
 
 class FeatureNet(nn.Module):
-    def __init__(self, base_channels, num_stage=3, stride=4):
+    def __init__(self, base_channels, num_stage=3, stride=4, arch_mode="unet"):
         super(FeatureNet, self).__init__()
+        assert arch_mode in ["unet", "fpn"], print("mode must be in 'unet' or 'fpn', but get:{}".format(arch_mode))
+        print("*************feature extraction arch mode:{}****************".format(arch_mode))
+        self.arch_mode = arch_mode
         self.stride = stride
         self.base_channels = base_channels
         self.num_stage = num_stage
 
-        self.conv00 = Conv2d(3, base_channels, (7, 11), 1, dynamic=True, res_op=False)
-        self.conv01 = Conv2d(base_channels, base_channels, (5, 7), 1, dynamic=True)
+        self.conv00 = Conv2d(3, base_channels, (3, 7, 11), 1, dynamic=True)
+        self.conv01 = Conv2d(base_channels, base_channels, (3, 5, 7), 1, dynamic=True)
 
-        self.downsample1 = Conv2d(base_channels, base_channels*2, 3, stride=2, padding=1, res_op=False)
+        self.downsample1 = Conv2d(base_channels, base_channels*2, 3, stride=2, padding=1)
         self.conv10 = Conv2d(base_channels*2, base_channels*2, (3, 5), 1, dynamic=True)
         self.conv11 = Conv2d(base_channels*2, base_channels*2, (3, 5), 1, dynamic=True)
 
-        self.downsample2 = Conv2d(base_channels*2, base_channels*4, 3, stride=2, padding=1, res_op=False)
+        self.downsample2 = Conv2d(base_channels*2, base_channels*4, 3, stride=2, padding=1)
         self.conv20 = Conv2d(base_channels*4, base_channels*4, (3, 5), 1, dynamic=True)
         self.conv21 = Conv2d(base_channels*4, base_channels*4, (3, 5), 1, dynamic=True)
 
-        self.downsample3 = Conv2d(base_channels*4, base_channels*8, 3, stride=2, padding=1, res_op=False)
-        self.conv3 = Conv2d(base_channels*8, base_channels*8, (3, 5), 1, dynamic=True)
-        self.act3 = nn.Sequential(LayerNorm(base_channels*8, data_format="channels_first"), nn.Tanh())
-        
+        self.downsample3 = Conv2d(base_channels*4, base_channels*8, 3, stride=2, padding=1)
+        self.conv30 = Conv2d(base_channels*8, base_channels*8, (1, 3), 1, dynamic=True)
+        self.conv31 = Conv2d(base_channels*8, base_channels*8, (1, 3), 1, dynamic=True)
+        self.out0 = DynamicConv(base_channels*8, base_channels*8, size_kernels=(1, 3))
+        self.act0 = nn.Sequential(nn.BatchNorm2d(base_channels*8), nn.Tanh())
+        self.out_channels = [base_channels * 8]
 
-        self.out2 = DynamicConv(base_channels*4, base_channels*4, size_kernels=(1, 3))
-        self.act2 = nn.Sequential(LayerNorm(base_channels*4, data_format="channels_first"), nn.Tanh()) # nn.Sequential(nn.InstanceNorm2d(base_channels*4), nn.Tanh())
-        # self.out_channels = [base_channels*4]
+        self.inner0 = Conv2d(base_channels * 12, base_channels * 4, 3, padding=1)
+        self.inner1 = Conv2d(base_channels * 6, base_channels * 2, 3, padding=1)
+        self.inner2 = Conv2d(base_channels * 3, base_channels * 2, 3, padding=1)
 
-        self.inner2 = Conv2d(base_channels * 12, base_channels * 4, 3, padding=1, res_op=False)
-        self.inner1 = Conv2d(base_channels * 6, base_channels * 2, 3, padding=1, res_op=False)
-        self.inner0 = Conv2d(base_channels * 3, base_channels * 2, 3, padding=1, res_op=False)
+        self.out1 = DynamicConv(base_channels*4, base_channels*4, size_kernels=(3, 5))
+        self.act1 = nn.Sequential(nn.BatchNorm2d(base_channels*4), nn.Tanh())
+        self.out2 = DynamicConv(base_channels*2, base_channels*2, size_kernels=(3, 5))
+        self.act2 = nn.Sequential(nn.BatchNorm2d(base_channels*2), nn.Tanh())
+        self.out3 = DynamicConv(base_channels*2, base_channels*2, size_kernels=(3, 5))
+        self.act3 = nn.Sequential(nn.BatchNorm2d(base_channels*2), nn.Tanh())
 
-        self.out1 = DynamicConv(base_channels*2, base_channels*2, size_kernels=(1, 3))
-        self.act1 = nn.Sequential(LayerNorm(base_channels*2, data_format="channels_first"), nn.Tanh()) # nn.Sequential(nn.InstanceNorm2d(base_channels*2), nn.Tanh())
-        self.out0 = DynamicConv(base_channels*2, base_channels*2, size_kernels=(1, 3))
-        self.act0 = nn.Sequential(LayerNorm(base_channels*2, data_format="channels_first"), nn.Tanh()) # nn.Sequential(nn.InstanceNorm2d(base_channels), nn.Tanh())
-        # self.out_channels.append(base_channels*2)
-        # self.out_channels.append(base_channels)
-        self.out_channels = [base_channels * 8, base_channels * 4, base_channels * 2, base_channels * 2]
+        self.out_channels.append(base_channels*4)
+        self.out_channels.append(base_channels*2)
+        self.out_channels.append(base_channels*2)
 
-    def forward(self, x, epipole=None, temperature=0.01):
+    def forward(self, x, epipole=None, temperature=0.001):
         conv00, nc00 = self.conv00(x, epipole, temperature)
         conv01, nc01 = self.conv01(conv00, epipole, temperature)
         down_conv0, down_epipole0 = self.downsample1(conv01), epipole / 2
@@ -308,35 +294,127 @@ class FeatureNet(nn.Module):
         down_conv1, down_epipole1 = self.downsample2(conv11), epipole / 4
         conv20, nc20 = self.conv20(down_conv1, down_epipole1, temperature)
         conv21, nc21 = self.conv21(conv20, down_epipole1, temperature)
-
-        outputs = {}
-
         down_conv2, down_epipole2 = self.downsample3(conv21), epipole / 8
-        out3, nc3 = self.conv3(down_conv2, down_epipole2, temperature)
-        outputs["stage1"] = self.act3(out3), nc3**2, nc3.abs()
+        conv30, nc30 = self.conv30(down_conv2, down_epipole2, temperature)
+        conv31, nc31 = self.conv31(conv30, down_epipole2, temperature)
+        
+        intra_feat = conv31
+        out, nc32 = self.out0(intra_feat, epipole=down_epipole2, temperature=temperature)
+        out = self.act0(out)
+        nc_sum = (nc30**2 + nc31**2 + nc32**2) / 3
+        outputs = {}
+        outputs["stage1"] = out, nc_sum, nc32.abs()
 
-        intra_feat = torch.cat((F.interpolate(out3, scale_factor=2, mode="nearest"), conv21), dim=1) # conv21
-        intra_feat = self.inner2(intra_feat)
-        out2, nc22 = self.out2(intra_feat, epipole=down_epipole1, temperature=temperature)
-        # out = self.act1(out)
-        nc_sum = (nc20 ** 2 + nc21**2 + nc22 ** 2) / 3
-        outputs["stage2"] = self.act2(out2), nc_sum, nc22.abs()
-
-        intra_feat = torch.cat((F.interpolate(out2, scale_factor=2, mode="nearest"), conv11), dim=1)
-        intra_feat = self.inner1(intra_feat)
-        out1, nc12 = self.out1(intra_feat, epipole=down_epipole0, temperature=temperature)
-        # out = self.act2(out)
-        nc_sum = (nc10 ** 2 + nc11 ** 2 + nc12 ** 2) / 3
-        outputs["stage3"] = self.act1(out1), nc_sum, nc12.abs()
-
-        intra_feat = torch.cat((F.interpolate(out1, scale_factor=2, mode="nearest"), conv01), dim=1)
+        intra_feat = torch.cat((F.interpolate(intra_feat, scale_factor=2, mode="bilinear"), conv21), dim=1)
         intra_feat = self.inner0(intra_feat)
-        out0, nc02 = self.out0(intra_feat, epipole=epipole, temperature=temperature)
-        # out = self.act3(out)
+        out, nc22 = self.out1(intra_feat, epipole=down_epipole1, temperature=temperature)
+        out = self.act1(out)
+        nc_sum = (nc20 ** 2 + nc21**2 + nc22 ** 2) / 3
+        outputs["stage2"] = out, nc_sum, nc22.abs()
+
+        intra_feat = torch.cat((F.interpolate(intra_feat, scale_factor=2, mode="bilinear"), conv11), dim=1)
+        intra_feat = self.inner1(intra_feat)
+        out, nc12 = self.out2(intra_feat, epipole=down_epipole0, temperature=temperature)
+        out = self.act2(out)
+        nc_sum = (nc10 ** 2 + nc11 ** 2 + nc12 ** 2) / 3
+        outputs["stage3"] = out, nc_sum, nc12.abs()
+
+        intra_feat = torch.cat((F.interpolate(intra_feat, scale_factor=2, mode="bilinear"), conv01), dim=1)
+        intra_feat = self.inner2(intra_feat)
+        out, nc02 = self.out3(intra_feat, epipole=epipole, temperature=temperature)
+        out = self.act3(out)
         nc_sum = (nc00 ** 2 + nc01 ** 2 + nc02 ** 2) / 3
-        outputs["stage4"] = self.act0(out0), nc_sum, nc02.abs()
+        outputs["stage4"] = out, nc_sum, nc02.abs()
 
         return outputs
+
+
+# class FeatureNet(nn.Module):
+#     def __init__(self, base_channels, num_stage=3, stride=4):
+#         super(FeatureNet, self).__init__()
+#         self.stride = stride
+#         self.base_channels = base_channels
+#         self.num_stage = num_stage
+
+#         self.conv00 = Conv2d(3, base_channels, (5, 7, 11), 1, dynamic=True, res_op=False)
+#         # self.conv01 = Conv2d(base_channels, base_channels, (5, 7), 1, dynamic=True)
+
+#         self.downsample1 = Conv2d(base_channels, base_channels*2, 3, stride=2, padding=1, res_op=False)
+#         self.conv10 = Conv2d(base_channels*2, base_channels*2, (5, 7), 1, dynamic=True)
+#         self.conv11 = Conv2d(base_channels*2, base_channels*2, (5, 7), 1, dynamic=True)
+
+#         self.downsample2 = Conv2d(base_channels*2, base_channels*4, 3, stride=2, padding=1, res_op=False)
+#         self.conv20 = Conv2d(base_channels*4, base_channels*4, (3, 5), 1, dynamic=True)
+#         self.conv21 = Conv2d(base_channels*4, base_channels*4, (3, 5), 1, dynamic=True)
+
+#         self.downsample3 = Conv2d(base_channels*4, base_channels*8, 3, stride=2, padding=1, res_op=False)
+#         self.conv3 = Conv2d(base_channels*8, base_channels*8, (3, 5), 1, dynamic=True)
+#         # self.act3 = nn.Sequential(LayerNorm(base_channels*8, data_format="channels_first"), nn.Tanh())
+#         self.act3 = LayerNorm(base_channels*8, data_format="channels_first")
+        
+
+#         self.out2 = nn.Conv2d(base_channels*4, base_channels*4, kernel_size=3, padding=1) # DynamicConv(base_channels*4, base_channels*4, size_kernels=(3, 5))
+#         # self.act2 = nn.Sequential(LayerNorm(base_channels*4, data_format="channels_first"), nn.Tanh()) # nn.Sequential(nn.InstanceNorm2d(base_channels*4), nn.Tanh())
+#         self.act2 = LayerNorm(base_channels*4, data_format="channels_first")
+
+#         self.inner2 = Conv2d(base_channels * 12, base_channels * 4, 5, padding=2, res_op=False)
+#         self.inner1 = Conv2d(base_channels * 6, base_channels * 2, 5, padding=2, res_op=False)
+#         self.inner0 = Conv2d(base_channels * 3, base_channels * 2, 5, padding=2, res_op=False)
+
+#         self.out1 = nn.Conv2d(base_channels*2, base_channels*2, kernel_size=3, padding=1) # DynamicConv(base_channels*2, base_channels*2, size_kernels=(3, 5))
+#         # self.act1 = nn.Sequential(LayerNorm(base_channels*2, data_format="channels_first"), nn.Tanh()) # nn.Sequential(nn.InstanceNorm2d(base_channels*2), nn.Tanh())
+#         self.act1 = LayerNorm(base_channels*2, data_format="channels_first")
+#         self.out0 = nn.Conv2d(base_channels*2, base_channels, kernel_size=3, padding=1) # DynamicConv(base_channels*2, base_channels*2, size_kernels=(3, 5))
+#         # self.act0 = nn.Sequential(LayerNorm(base_channels*2, data_format="channels_first"), nn.Tanh()) # nn.Sequential(nn.InstanceNorm2d(base_channels), nn.Tanh())
+#         self.act0 = LayerNorm(base_channels, data_format="channels_first")
+#         # self.out_channels.append(base_channels*2)
+#         # self.out_channels.append(base_channels)
+#         self.out_channels = [base_channels * 8, base_channels * 4, base_channels * 2, base_channels]
+
+#     def forward(self, x, epipole=None, temperature=0.01):
+#         conv00, nc00 = self.conv00(x, epipole, temperature)
+#         conv01, nc01 = conv00, nc00 # self.conv01(conv00, epipole, temperature)
+#         down_conv0, down_epipole0 = self.downsample1(conv01), epipole / 2
+#         conv10, nc10 = self.conv10(down_conv0, down_epipole0, temperature)
+#         conv11, nc11 = self.conv11(conv10, down_epipole0, temperature)
+#         down_conv1, down_epipole1 = self.downsample2(conv11), epipole / 4
+#         conv20, nc20 = self.conv20(down_conv1, down_epipole1, temperature)
+#         conv21, nc21 = self.conv21(conv20, down_epipole1, temperature)
+
+#         outputs = {}
+
+#         down_conv2, down_epipole2 = self.downsample3(conv21), epipole / 8
+#         out3, nc3 = self.conv3(down_conv2, down_epipole2, temperature)
+#         outputs["stage1"] = self.act3(out3), nc3**2, nc3.abs()
+
+#         intra_feat = torch.cat((F.interpolate(out3, scale_factor=2, mode="nearest"), conv21), dim=1) # conv21
+#         intra_feat = self.inner2(intra_feat)
+#         # out2, nc22 = self.out2(intra_feat, epipole=down_epipole1, temperature=temperature)
+#         out2 = self.out2(intra_feat)
+#         # out = self.act1(out)
+#         # nc_sum = (nc20 ** 2 + nc21**2 + nc22 ** 2) / 3
+#         nc_sum = (nc20 ** 2 + nc21**2) / 2
+#         outputs["stage2"] = self.act2(out2), nc_sum, nc_sum.sqrt() # nc22.abs()
+
+#         intra_feat = torch.cat((F.interpolate(out2, scale_factor=2, mode="nearest"), conv11), dim=1)
+#         intra_feat = self.inner1(intra_feat)
+#         # out1, nc12 = self.out1(intra_feat, epipole=down_epipole0, temperature=temperature)
+#         out1 = self.out1(intra_feat)
+#         # out = self.act2(out)
+#         # nc_sum = (nc10 ** 2 + nc11 ** 2 + nc12 ** 2) / 3
+#         nc_sum = (nc10 ** 2 + nc11 ** 2) / 2
+#         outputs["stage3"] = self.act1(out1), nc_sum, nc_sum.sqrt() # nc12.abs()
+
+#         intra_feat = torch.cat((F.interpolate(out1, scale_factor=2, mode="nearest"), conv01), dim=1)
+#         intra_feat = self.inner0(intra_feat)
+#         # out0, nc02 = self.out0(intra_feat, epipole=epipole, temperature=temperature)
+#         out0 = self.out0(intra_feat)
+#         # out = self.act3(out)
+#         # nc_sum = (nc00 ** 2 + nc01 ** 2 + nc02 ** 2) / 3
+#         nc_sum = (nc00 ** 2 + nc01 ** 2) / 2
+#         outputs["stage4"] = self.act0(out0), nc_sum, nc_sum.sqrt() # nc02.abs()
+
+#         return outputs
 
 
 # class CostRegNet(nn.Module):

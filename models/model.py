@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from models.module import depth_regression, conf_regression, FeatureNet, CostRegNet, Refinement, get_depth_range_samples, ConvBnReLU
+from models.module import depth_regression, conf_regression, FeatureNet, CostRegNet, Refinement, get_depth_range_samples, ConvBnReLU, Conv2d
 from models.utils.warping import homo_warping_3D
 from models.dynamic_conv import compute_Fmatrix, compute_epipole
 
@@ -11,7 +11,10 @@ Align_Corners_Range = False
 class StageNet(nn.Module):
     def __init__(self, num_mvs_stages=3):
         super(StageNet, self).__init__()
-        self.vis = nn.ModuleList([nn.Sequential(ConvBnReLU(2, 16), ConvBnReLU(16, 16), ConvBnReLU(16, 16), nn.Conv2d(16, 1, 1), nn.Sigmoid()) for _ in range(num_mvs_stages)])
+        # self.vis = nn.ModuleList([nn.Sequential(ConvBnReLU(2, 16), ConvBnReLU(16, 16), ConvBnReLU(16, 16), nn.Conv2d(16, 1, 1), nn.Sigmoid()) for _ in range(num_mvs_stages)])
+        self.vis = nn.ModuleList([nn.Sequential(Conv2d(2, 16, 5, padding=2), 
+                                  Conv2d(16, 16, 5, padding=2), Conv2d(16, 16, 5, padding=2), 
+                                  nn.Conv2d(16, 1, 1), nn.Sigmoid()) for _ in range(num_mvs_stages)])
 
     def forward(self, features, proj_matrices, depth_values, num_depth, cost_regularization, prob_volume_init=None, stage_idx=0,
                 gt_depth=None):
@@ -44,7 +47,7 @@ class StageNet(nn.Module):
             warped_volume = homo_warping_3D(src_fea, src_proj_new, ref_proj_new, depth_values)
 
             ref_volume = ref_fea.unsqueeze(2).repeat(1, 1, num_depth, 1, 1)
-            in_prod_vol = ref_volume * warped_volume # / (ref_volume.shape[1] ** 0.5)
+            in_prod_vol = ref_volume * warped_volume / ref_volume.shape[1]
             sim_vol = in_prod_vol.sum(dim=1)
             sim_vol_norm = F.softmax(sim_vol.detach(), dim=1)
             entropy = (- sim_vol_norm * torch.log(sim_vol_norm)).sum(dim=1, keepdim=True)
@@ -152,6 +155,20 @@ class CDSMVSNet(nn.Module):
                                                                  base_channels=self.cr_base_chs[i], n_levels=cost_reg_levels[i])
                                                       for i in range(self.num_stages)])
         #self.depth_params = list(self.cost_regularization.parameters()) + list(self.stage_net.parameters())
+    def load_pretrained_model(self, ckpt_path=None):
+        if ckpt_path is not None:
+            print('Loading checkpoint: {} ...'.format(ckpt_path))
+            checkpoint = torch.load(str(ckpt_path))
+            state_dict = checkpoint['state_dict']
+            new_state_dict = {}
+            for key, val in state_dict.items():
+                new_key = key.replace('model.', '')
+                new_state_dict[new_key] = val
+                if "refine_network" in new_key:
+                    del new_state_dict[new_key]
+            self.load_state_dict(new_state_dict, strict=True)
+        # model.load_state_dict(state_dict)
+
 
     def forward(self, imgs, proj_matrices, depth_values, gt_depths=None, temperature=0.001):
         depth_min = depth_values[:, [0]].unsqueeze(-1).unsqueeze(-1) #float(depth_values[0, 0].cpu().numpy())
