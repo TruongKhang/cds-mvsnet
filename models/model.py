@@ -12,7 +12,7 @@ class StageNet(nn.Module):
     def __init__(self, num_mvs_stages=3):
         super(StageNet, self).__init__()
         # self.vis = nn.ModuleList([nn.Sequential(ConvBnReLU(2, 16), ConvBnReLU(16, 16), ConvBnReLU(16, 16), nn.Conv2d(16, 1, 1), nn.Sigmoid()) for _ in range(num_mvs_stages)])
-        self.vis = nn.ModuleList([nn.Sequential(Conv2d(2, 16, 5, padding=2), 
+        self.vis = nn.ModuleList([nn.Sequential(Conv2d(1, 16, 5, padding=2), 
                                   Conv2d(16, 16, 5, padding=2), Conv2d(16, 16, 5, padding=2), 
                                   nn.Conv2d(16, 1, 1), nn.Sigmoid()) for _ in range(num_mvs_stages)])
 
@@ -51,7 +51,7 @@ class StageNet(nn.Module):
             sim_vol = in_prod_vol.sum(dim=1)
             sim_vol_norm = F.softmax(sim_vol.detach(), dim=1)
             entropy = (- sim_vol_norm * torch.log(sim_vol_norm)).sum(dim=1, keepdim=True)
-            vis_weight = self.vis[stage_idx](torch.cat((entropy, ref_nc), dim=1))
+            vis_weight = self.vis[stage_idx](entropy)
             if self.training:
                 volume_sum = volume_sum + in_prod_vol * vis_weight.unsqueeze(1)
                 vis_sum = vis_sum + vis_weight
@@ -85,7 +85,7 @@ class StageNet(nn.Module):
         # cost_reg = cost_regularization(volume_variance)
         cost_reg = cost_regularization(volume_mean)
         # cost_reg = F.upsample(cost_reg, [num_depth * 4, img_height, img_width], mode='trilinear')
-        prob_volume_pre = cost_reg.squeeze(1)
+        prob_volume_pre = cost_reg.squeeze(1) / 0.1
 
         if prob_volume_init is not None:
             prob_volume_pre += prob_volume_init
@@ -144,8 +144,8 @@ class CDSMVSNet(nn.Module):
             cost_reg_levels = [3, 3, 3, 2]
 
         self.feature = FeatureNet(base_channels=8)
-        # for p in self.feature.parameters():
-        #     p.requires_grad = False
+        for p in self.feature.parameters():
+            p.requires_grad = False
         self.stage_net = StageNet(num_mvs_stages=len(ndepths))
         if self.share_cr:
             self.cost_regularization = CostRegNet(in_channels=self.feature.out_channels, base_channels=8)
@@ -166,7 +166,9 @@ class CDSMVSNet(nn.Module):
                 new_state_dict[new_key] = val
                 if "refine_network" in new_key:
                     del new_state_dict[new_key]
-            self.load_state_dict(new_state_dict, strict=True)
+                if "stage_net.vis" in new_key:
+                    del new_state_dict[new_key]
+            self.load_state_dict(new_state_dict, strict=False)
         # model.load_state_dict(state_dict)
 
 
