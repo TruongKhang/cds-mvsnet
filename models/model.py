@@ -12,9 +12,9 @@ class StageNet(nn.Module):
     def __init__(self, num_mvs_stages=3):
         super(StageNet, self).__init__()
         # self.vis = nn.ModuleList([nn.Sequential(ConvBnReLU(2, 16), ConvBnReLU(16, 16), ConvBnReLU(16, 16), nn.Conv2d(16, 1, 1), nn.Sigmoid()) for _ in range(num_mvs_stages)])
-        self.vis = nn.ModuleList([nn.Sequential(Conv2d(1, 16, 5, padding=2), 
-                                  Conv2d(16, 16, 5, padding=2), Conv2d(16, 16, 5, padding=2), 
-                                  nn.Conv2d(16, 1, 1), nn.Sigmoid()) for _ in range(num_mvs_stages)])
+        self.vis = nn.ModuleList([nn.Sequential(Conv2d(1, 32, 5, padding=2), 
+                                  Conv2d(32, 32, 5, padding=2), Conv2d(32, 32, 5, padding=2), 
+                                  nn.Conv2d(32, 1, 1), nn.Sigmoid()) for _ in range(num_mvs_stages)])
 
     def forward(self, features, proj_matrices, depth_values, num_depth, cost_regularization, prob_volume_init=None, stage_idx=0,
                 gt_depth=None):
@@ -144,8 +144,8 @@ class CDSMVSNet(nn.Module):
             cost_reg_levels = [3, 3, 3, 2]
 
         self.feature = FeatureNet(base_channels=8)
-        for p in self.feature.parameters():
-            p.requires_grad = False
+        # for p in self.feature.parameters():
+        #     p.requires_grad = False
         self.stage_net = StageNet(num_mvs_stages=len(ndepths))
         if self.share_cr:
             self.cost_regularization = CostRegNet(in_channels=self.feature.out_channels, base_channels=8)
@@ -212,19 +212,19 @@ class CDSMVSNet(nn.Module):
                     cur_depth = depth.detach()
                 else:
                     cur_depth = depth
-                cur_depth = F.interpolate(cur_depth.unsqueeze(1), [height, width], mode='bilinear',
+                cur_depth = F.interpolate(cur_depth.unsqueeze(1), [height//int(stage_scale), width//int(stage_scale)], mode='bilinear',
                                           align_corners=Align_Corners_Range).squeeze(1)
             else:
                 cur_depth = depth_values
-            depth_range_samples = get_depth_range_samples(cur_depth=cur_depth, ndepth=self.ndepths[stage_idx],
+            depth_samples = get_depth_range_samples(cur_depth=cur_depth, ndepth=self.ndepths[stage_idx],
                                                           depth_inteval_pixel=self.depth_interals_ratio[stage_idx] * depth_interval,
                                                           dtype=imgs[0].dtype, device=imgs[0].device,
-                                                          shape=[batch_size, height, width],
+                                                          shape=[batch_size, height//int(stage_scale), width//int(stage_scale)],
                                                           max_depth=depth_max, min_depth=depth_min)
 
-            depth_samples = F.interpolate(depth_range_samples.unsqueeze(1),
-                                          [self.ndepths[stage_idx], height//int(stage_scale), width//int(stage_scale)], mode='trilinear',
-                                          align_corners=Align_Corners_Range).squeeze(1)
+            # depth_samples = F.interpolate(depth_range_samples.unsqueeze(1),
+            #                               [self.ndepths[stage_idx], height//int(stage_scale), width//int(stage_scale)], mode='trilinear',
+            #                               align_corners=Align_Corners_Range).squeeze(1)
             outputs_stage = self.stage_net(features_stage, proj_matrices_stage,
                                            depth_values=depth_samples,
                                            num_depth=self.ndepths[stage_idx],
@@ -236,7 +236,7 @@ class CDSMVSNet(nn.Module):
             if gt_depths is not None:
                 target = (depth_samples - gt_depth_stage).abs() / di_stage
                 # target = (feat_depth_samples - gt_depth_stage).abs() / di_stage
-                target = (target < 0.5).float()
+                target = (target < 0.5 / self.depth_interals_ratio[stage_idx]).float()
                 target = torch.cat((target, torch.ones_like(gt_depth_stage)), dim=1)
                 outputs_stage.update({"feat_target": target})
 
