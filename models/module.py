@@ -267,7 +267,8 @@ class FeatureNet(nn.Module):
         self.conv30 = Conv2d(base_channels*8, base_channels*8, (1, 3), 1, dynamic=True)
         self.conv31 = Conv2d(base_channels*8, base_channels*8, (1, 3), 1, dynamic=True)
         self.out0 = DynamicConv(base_channels*8, base_channels*8, size_kernels=(1, 3))
-        self.act0 = nn.Sequential(nn.InstanceNorm2d(base_channels*8), nn.Tanh())
+        # self.act0 = nn.Sequential(nn.InstanceNorm2d(base_channels*8), nn.Tanh())
+        self.act0 = LayerNorm(base_channels*8, data_format="channels_first")
         self.out_channels = [base_channels * 8]
 
         self.inner0 = Conv2d(base_channels * 12, base_channels * 4, 3, padding=1)
@@ -275,11 +276,14 @@ class FeatureNet(nn.Module):
         self.inner2 = Conv2d(base_channels * 3, base_channels * 2, 3, padding=1)
 
         self.out1 = DynamicConv(base_channels*4, base_channels*4, size_kernels=(3, 5))
-        self.act1 = nn.Sequential(nn.InstanceNorm2d(base_channels*4), nn.Tanh())
+        # self.act1 = nn.Sequential(nn.InstanceNorm2d(base_channels*4), nn.Tanh())
+        self.act1 = LayerNorm(base_channels*4, data_format="channels_first")
         self.out2 = DynamicConv(base_channels*2, base_channels*2, size_kernels=(3, 5))
-        self.act2 = nn.Sequential(nn.InstanceNorm2d(base_channels*2), nn.Tanh())
+        # self.act2 = nn.Sequential(nn.InstanceNorm2d(base_channels*2), nn.Tanh())
+        self.act2 = LayerNorm(base_channels*2, data_format="channels_first")
         self.out3 = DynamicConv(base_channels*2, base_channels*2, size_kernels=(3, 5))
-        self.act3 = nn.Sequential(nn.InstanceNorm2d(base_channels*2), nn.Tanh())
+        # self.act3 = nn.Sequential(nn.InstanceNorm2d(base_channels*2), nn.Tanh())
+        self.act3 = LayerNorm(base_channels*2, data_format="channels_first")
 
         self.out_channels.append(base_channels*4)
         self.out_channels.append(base_channels*2)
