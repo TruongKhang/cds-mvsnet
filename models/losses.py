@@ -19,7 +19,9 @@ def final_loss(inputs, depth_gt_ms, mask_ms, **kwargs):
 
         depth_loss = F.smooth_l1_loss(depth_est[mask], depth_gt[mask], reduction='mean')
 
-        norm_curv_reg = torch.mean(stage_inputs["norm_curv"].squeeze(1)[mask])
+        norm_curv_reg = 0.0
+        if "norm_curv" in stage_inputs:
+            norm_curv_reg = torch.mean(stage_inputs["norm_curv"].squeeze(1)[mask])
 
         feat_loss = 0.0
         if "feat_distance" in stage_inputs:

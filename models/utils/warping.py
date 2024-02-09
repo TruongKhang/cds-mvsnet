@@ -98,7 +98,7 @@ def homo_warping_3D(src_fea, src_proj, ref_proj, depth_values):
         grid = proj_xy
 
     warped_src_fea = F.grid_sample(src_fea, grid.view(batch, num_depth * height, width, 2), mode='bilinear',
-                                   padding_mode='zeros', align_corners=False)
+                                   padding_mode='zeros', align_corners=True)
     warped_src_fea = warped_src_fea.view(batch, channels, num_depth, height, width)
 
     return warped_src_fea
