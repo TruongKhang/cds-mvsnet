@@ -32,7 +32,7 @@ def final_loss(inputs, depth_gt_ms, mask_ms, **kwargs):
             pos_pixels = target[mask].sum()
             neg_pixels = torch.numel(target[mask]) - pos_pixels
             balanced_weight = neg_pixels / pos_pixels
-            feat_loss = F.binary_cross_entropy_with_logits(feat_dis[mask], target[mask], reduction='mean',
+            feat_loss = F.binary_cross_entropy(feat_dis[mask], target[mask], reduction='mean',
                                                            pos_weight=balanced_weight)
         if depth_loss_weights is not None:
             stage_idx = int(stage_key.replace("stage", "")) - 1

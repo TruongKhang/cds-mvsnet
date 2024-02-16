@@ -1,9 +1,39 @@
-from torch.utils.data import Dataset
 import os, cv2, time
+import torch
+from torch.utils.data import Dataset
 from PIL import Image, ImageOps
-from datasets.data_io import *
+from kornia.geometry.transform import warp_perspective
+import kornia.augmentation as KA
 
+from datasets.data_io import *
 from .utils import ImgAug
+
+
+class GeometricSequential:
+    def __init__(self, *transforms, align_corners=True) -> None:
+        self.transforms = transforms
+        self.align_corners = align_corners
+
+    def __call__(self, x, mode="bilinear"):
+        b, c, h, w = x.shape
+        M = torch.eye(3, device=x.device)[None].expand(b, 3, 3)
+        for t in self.transforms:
+            if np.random.rand() < t.p:
+                M = M.matmul(
+                    t.compute_transformation(x, t.generate_parameters((b, c, h, w)), flags=None)
+                )
+        return (
+            warp_perspective(
+                x, M, dsize=(h, w), mode=mode, align_corners=self.align_corners
+            ),
+            M,
+        )
+
+    def apply_transform(self, x, M, mode="bilinear"):
+        b, c, h, w = x.shape
+        return warp_perspective(
+            x, M, dsize=(h, w), align_corners=self.align_corners, mode=mode
+        )
 
 
 class BlendedMVSDataset(Dataset):
@@ -17,6 +47,7 @@ class BlendedMVSDataset(Dataset):
         self.interval_scale = interval_scale
         self.kwargs = kwargs
         self.img_aug = ImgAug()
+        self.geo_aug = GeometricSequential(KA.RandomAffine(degrees=90, p=0.3)) if mode == "train" else None
 
         assert self.mode in ["train", "val", "test"]
         self.metas = self.build_list()
@@ -56,7 +87,7 @@ class BlendedMVSDataset(Dataset):
     def __len__(self):
         return len(self.metas)
 
-    def read_cam_file(self, filename):
+    def read_cam_file(self, filename, H_mat=None):
         with open(filename) as f:
             lines = f.readlines()
             lines = [line.rstrip() for line in lines]
@@ -64,9 +95,15 @@ class BlendedMVSDataset(Dataset):
         extrinsics = np.fromstring(' '.join(lines[1:5]), dtype=np.float32, sep=' ').reshape((4, 4))
         # intrinsics: line [7-10), 3x3 matrix
         intrinsics = np.fromstring(' '.join(lines[7:10]), dtype=np.float32, sep=' ').reshape((3, 3))
-        # intrinsics[0, 2] -= 64.0
-        # intrinsics[1, 2] -= 32.0
-        intrinsics[:2, :] /= 4.0
+        
+        # intrinsics[0, 2] -= 32.0
+        intrinsics[1, 2] -= 32.0
+        # intrinsics[:2, :] /= 4.0
+        if H_mat is not None:
+            K = torch.from_numpy(intrinsics).float()
+            intrinsics = H_mat[0] @ K
+            intrinsics = intrinsics.numpy()
+
         # depth_min & depth_interval: line 11
         depth_min = float(lines[11].split()[0])
         depth_interval = float(lines[11].split()[1])
@@ -82,7 +119,7 @@ class BlendedMVSDataset(Dataset):
 
     def prepare_img(self, img):
         h, w = img.shape[:2]
-        target_h, target_w = 576, 768
+        target_h, target_w = 512, 768 #576, 768
         start_h, start_w = (h - target_h)//2, (w - target_w)//2
         img_crop = img[start_h: start_h + target_h, start_w: start_w + target_w]
         return img_crop
@@ -97,12 +134,23 @@ class BlendedMVSDataset(Dataset):
         np_img = np.array(img, dtype=np.float32) / 255.
         np_img = self.prepare_img(np_img)
 
-        return np_img
+        H_mat = None
+        if self.geo_aug is not None:
+            tensor_img = torch.from_numpy(np_img).float()
+            tensor_img, H_mat = self.geo_aug(tensor_img.permute(2, 0, 1).unsqueeze(0))
+            np_img = tensor_img[0].permute(1, 2, 0).numpy()
 
-    def read_depth(self, filename, new_h, new_w):
+        return np_img, H_mat
+
+    def read_depth(self, filename, new_h, new_w, H_mat=None):
         # read pfm depth file
         depth = np.array(read_pfm(filename)[0], dtype=np.float32)
         depth = self.prepare_img(depth)
+        if H_mat is not None:
+            depth = torch.from_numpy(depth)
+            depth = self.geo_aug.apply_transform(depth[None, None], H_mat, mode='nearest')
+            depth = depth.squeeze(0).squeeze(0).numpy()
+
         depth = cv2.resize(depth, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
 
         h, w = depth.shape
@@ -121,29 +169,33 @@ class BlendedMVSDataset(Dataset):
                 "stage3": depth,
             }
 
-        return depth_ms
+        mask_ms = {}
+        for stage, dm in depth_ms.items():
+            mask_ms[stage] = (dm > 0).astype(np.float32)
 
-    def read_mask(self, filename, new_h, new_w):
-        depth = np.array(read_pfm(filename)[0], dtype=np.float32)
-        np_img = (depth > 0).astype(np.float32)
-        np_img = self.prepare_img(np_img)
-        np_img = cv2.resize(np_img, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
+        return depth_ms, mask_ms
 
-        h, w = np_img.shape
-        if self.kwargs["num_stages"] == 4:
-            np_img_ms = {
-                "stage1": cv2.resize(np_img, (w//8, h//8), interpolation=cv2.INTER_NEAREST),
-                "stage2": cv2.resize(np_img, (w//4, h//4), interpolation=cv2.INTER_NEAREST),
-                "stage3": cv2.resize(np_img, (w//2, h//2), interpolation=cv2.INTER_NEAREST),
-                "stage4": np_img,
-            }
-        else:
-            np_img_ms = {
-                "stage1": cv2.resize(np_img, (w//4, h//4), interpolation=cv2.INTER_NEAREST),
-                "stage2": cv2.resize(np_img, (w//2, h//2), interpolation=cv2.INTER_NEAREST),
-                "stage3": np_img,
-            }
-        return np_img_ms
+    # def read_mask(self, filename, new_h, new_w):
+    #     depth = np.array(read_pfm(filename)[0], dtype=np.float32)
+    #     np_img = (depth > 0).astype(np.float32)
+    #     np_img = self.prepare_img(np_img)
+    #     np_img = cv2.resize(np_img, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
+
+    #     h, w = np_img.shape
+    #     if self.kwargs["num_stages"] == 4:
+    #         np_img_ms = {
+    #             "stage1": cv2.resize(np_img, (w//8, h//8), interpolation=cv2.INTER_NEAREST),
+    #             "stage2": cv2.resize(np_img, (w//4, h//4), interpolation=cv2.INTER_NEAREST),
+    #             "stage3": cv2.resize(np_img, (w//2, h//2), interpolation=cv2.INTER_NEAREST),
+    #             "stage4": np_img,
+    #         }
+    #     else:
+    #         np_img_ms = {
+    #             "stage1": cv2.resize(np_img, (w//4, h//4), interpolation=cv2.INTER_NEAREST),
+    #             "stage2": cv2.resize(np_img, (w//2, h//2), interpolation=cv2.INTER_NEAREST),
+    #             "stage3": np_img,
+    #         }
+    #     return np_img_ms
 
     def scale_img_cam(self, img, intrinsics, max_h, base=64):
         h, w = img.shape[:2]
@@ -183,10 +235,10 @@ class BlendedMVSDataset(Dataset):
             img_filename = os.path.join(self.datapath, '{}/blended_images/{:0>8}.jpg'.format(scan, vid))
             proj_mat_filename = os.path.join(self.datapath, '{}/cams/{:0>8}_cam.txt'.format(scan, vid))
             depth_filename = os.path.join(self.datapath, '{}/rendered_depth_maps/{:0>8}.pfm'.format(scan, vid))
-            mask_filename = os.path.join(self.datapath, '{}/rendered_depth_maps/{:0>8}.pfm'.format(scan, vid))
+            # mask_filename = os.path.join(self.datapath, '{}/rendered_depth_maps/{:0>8}.pfm'.format(scan, vid))
 
-            img = self.read_img(img_filename, augmentation=True if self.mode == "train" else False)
-            intrinsics, extrinsics, depth_min, depth_interval = self.read_cam_file(proj_mat_filename)
+            img, H_mat = self.read_img(img_filename, augmentation=True if self.mode == "train" else False)
+            intrinsics, extrinsics, depth_min, depth_interval = self.read_cam_file(proj_mat_filename, H_mat)
 
             img, intrinsics, scaled_h, scaled_w = self.scale_img_cam(img, intrinsics, max_h=512)
 
@@ -197,14 +249,14 @@ class BlendedMVSDataset(Dataset):
             proj_matrices.append(proj_mat)
 
             if i == 0:  # reference view
-                mask_read_ms = self.read_mask(mask_filename, scaled_h, scaled_w)
-                depth_ms = self.read_depth(depth_filename, scaled_h, scaled_w)
+                # mask_read_ms = self.read_mask(mask_filename, scaled_h, scaled_w, H_mat)
+                depth_ms, mask = self.read_depth(depth_filename, scaled_h, scaled_w, H_mat)
 
                 # get depth values
                 depth_max = depth_interval * (self.ndepths - 0.5) + depth_min
                 depth_values = np.arange(depth_min, depth_max, depth_interval, dtype=np.float32)
 
-                mask = mask_read_ms
+                # mask = mask_read_ms
 
             imgs.append(img)
 
@@ -213,25 +265,25 @@ class BlendedMVSDataset(Dataset):
         proj_matrices = np.stack(proj_matrices)
 
         stage2_pjmats = proj_matrices.copy()
-        stage2_pjmats[:, 1, :2, :] = proj_matrices[:, 1, :2, :] * 2
-        stage3_pjmats = proj_matrices.copy()
-        stage3_pjmats[:, 1, :2, :] = proj_matrices[:, 1, :2, :] * 4
+        stage2_pjmats[:, 1, :2, :] = proj_matrices[:, 1, :2, :] / 2
+        stage1_pjmats = proj_matrices.copy()
+        stage1_pjmats[:, 1, :2, :] = proj_matrices[:, 1, :2, :] / 4
 
         stage0_pjmats = proj_matrices.copy()
-        stage0_pjmats[:, 1, :2, :] = proj_matrices[:, 1, :2, :] * 0.5
+        stage0_pjmats[:, 1, :2, :] = proj_matrices[:, 1, :2, :] / 8
 
         if self.kwargs["num_stages"] == 4:
             proj_matrices_ms = {
                 "stage1": stage0_pjmats,
-                "stage2": proj_matrices,
+                "stage2": stage1_pjmats,
                 "stage3": stage2_pjmats,
-                "stage4": stage3_pjmats
+                "stage4": proj_matrices
             }
         else:
             proj_matrices_ms = {
-                "stage1": proj_matrices,
+                "stage1": stage1_pjmats,
                 "stage2": stage2_pjmats,
-                "stage3": stage3_pjmats
+                "stage3": proj_matrices
             }
 
         return {"imgs": imgs,

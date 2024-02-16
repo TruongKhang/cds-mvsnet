@@ -1,10 +1,8 @@
 matplotlib==3.3.4
-opencv-contrib-python==4.5.2.54
-opencv-python==4.5.2.54
-pandas==1.1.5
-plyfile==0.7.4
-scikit-learn==0.24.2
-scipy==1.5.4
+opencv-contrib-python==4.7.0.72
+opencv-python==4.7.0.72
+plyfile==1.0.3
+scikit-learn==1.1.2
 tensorboardX==2.4
 tqdm==4.61.1
 trimesh==3.9.29

@@ -55,13 +55,83 @@ class AttentionLayer(nn.Module):
 
     def forward(self, q, kv):
         B, N, C = q.shape
+    
         q_vec = self.q_layer(self.norm1(q)).reshape(B, N, self.num_heads, C // self.num_heads).permute(0, 2, 1, 3)
         kv_vec = self.kv_layer(self.norm1(kv)).reshape(B, -1, 2, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
-        k_vec, v_vec = kv_vec[0] * self.scale, kv_vec[1]
-        attn = (q_vec @ k_vec.transpose(-2, -1))
+        k_vec, v_vec = kv_vec[0], kv_vec[1]
+        attn = (q_vec @ k_vec.transpose(-2, -1)) * self.scale
         attn = attn.softmax(dim=-1)
         attn = self.attn_drop(attn)
         x = (attn @ v_vec).transpose(1, 2).reshape(B, -1, C)
+
+        x = self.proj(x)
+        x = self.proj_drop(x)
+
+        x = q + self.drop_path(self.gamma1 * x)
+        x = x + self.drop_path(self.gamma2 * self.mlp(self.norm2(x)))
+
+        return x
+    
+class LinearAttentionLayer(nn.Module):
+    def __init__(self, dim, num_heads=8, qkv_bias=False, qk_scale=None, attn_drop=0., 
+                 proj_drop=0., drop_path=0., layer_scale=None):
+        super().__init__()
+        """
+        Args:
+            dim: feature size dimension.
+            num_heads: number of attention head.
+            qkv_bias: bool argument for query, key, value learnable bias.
+            qk_scale: bool argument to scaling query, key.
+            attn_drop: attention dropout rate.
+            proj_drop: output dropout rate.
+        """
+        self.num_heads = num_heads
+        head_dim = dim // num_heads
+        self.head_dim = dim // num_heads
+        self.scale = qk_scale or head_dim ** -0.5
+        self.q_layer = nn.Linear(dim, dim, bias=qkv_bias)
+        self.kv_layer = nn.Linear(dim, dim*2, bias=qkv_bias)
+        self.attn_drop = nn.Dropout(attn_drop)
+        self.proj = nn.Linear(dim, dim)
+        self.proj_drop = nn.Dropout(proj_drop)
+
+        self.norm1 = nn.LayerNorm(dim)
+        self.norm2 = nn.LayerNorm(dim)
+
+        use_layer_scale = layer_scale is not None and type(layer_scale) in [int, float]
+        self.gamma1 = nn.Parameter(layer_scale * torch.ones(dim))  if use_layer_scale else 1
+        self.gamma2 = nn.Parameter(layer_scale * torch.ones(dim))  if use_layer_scale else 1
+
+        self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
+
+        self.mlp = MLP(dim, dim*2, dim)
+
+    def forward(self, q, kv, q_mask=None, kv_mask=None):
+        B, N, C = q.shape
+        
+        q_vec = self.q_layer(self.norm1(q)).reshape(B, N, self.num_heads, C // self.num_heads)
+        kv_vec = self.kv_layer(self.norm1(kv)).reshape(B, -1, 2, self.num_heads, C // self.num_heads).permute(2, 0, 1, 3, 4)
+        k_vec, v_vec = kv_vec[0].contiguous(), kv_vec[1].contiguous()
+        k_vec = F.elu(k_vec) + 1.0
+        q_vec = F.elu(q_vec) + 1.0
+
+        if q_mask is not None:
+            q_vec = q_vec * q_mask[:, :, None, None]
+        if kv_mask is not None:
+            k_vec = k_vec * kv_mask[:, :, None, None]
+            v_vec = v_vec * kv_mask[:, :, None, None]
+        
+        with torch.cuda.amp.autocast(enabled=False):
+            v_length = v_vec.size(1)
+            v_vec = v_vec / v_length
+            kv = torch.einsum("nlhd,nlhm->nhmd", k_vec, v_vec)  # [B,nhead,C2,C2]
+            # Compute the normalizer
+            z = 1 / (torch.einsum("nlhd,nhd->nlh", q_vec, k_vec.sum(dim=1)) + 1e-6)
+            # Finally compute and return the new values
+            x = torch.einsum("nlhd,nhmd,nlh->nlhm", q_vec, kv, z) * v_length  # [B,N,nhead,C2]
+
+        x = x.reshape(B, -1, C)
+        
         x = self.proj(x)
         x = self.proj_drop(x)
 
@@ -73,7 +143,7 @@ class AttentionLayer(nn.Module):
 
 class TopicFormer(nn.Module):
 
-    def __init__(self, dim, nhead, pool_layers=["seed"]*5, n_merge_layers=1, n_topics=100, n_samples=8, topic_dim=None):
+    def __init__(self, dim, nhead, pool_layers=["seed"]*5, n_merge_layers=1, n_topics=100, n_samples=8, topic_dim=None, attn_type="vanilla"):
         super(TopicFormer, self).__init__()
 
         # self.config = config
@@ -83,7 +153,13 @@ class TopicFormer(nn.Module):
         self.n_topics = n_topics
         self.n_samples = n_samples
 
-        encoder_layer = AttentionLayer(self.d_model, self.nhead, attn_drop=0.0)
+        if attn_type == "vanilla":
+            encoder_layer = AttentionLayer(self.d_model, self.nhead, attn_drop=0.0)
+        elif attn_type == "linear":
+            encoder_layer = LinearAttentionLayer(self.d_model, self.nhead, attn_drop=0.0)
+        else:
+            raise f"unknown {attn_type} attention"
+        
         if n_merge_layers > 0:
             self.feat_aug = nn.ModuleList([copy.deepcopy(encoder_layer) for _ in range(2*n_merge_layers)])
         self.n_iter_topic_transformer = n_merge_layers
@@ -98,7 +174,7 @@ class TopicFormer(nn.Module):
             # self.seed_tokens = topic_init
             self.emb_layer = nn.Linear(topic_dim, self.d_model, bias=False) if n_merge_layers > 0 else nn.Identity()
         
-        self.out = nn.LayerNorm(self.d_model) # nn.Tanh()
+        self.norm = nn.LayerNorm(self.d_model) # nn.Tanh()
 
         self._reset_parameters()
 
@@ -152,7 +228,7 @@ class TopicFormer(nn.Module):
         else:
             seeds = self.emb_layer(topic_init)
 
-        # dmatrix = torch.einsum("nmd,nkd->nmk", feat, seeds / C**.5)
+        # dmatrix = torch.einsum("nmd,nkd->nmk", self.norm(feat), self.norm(seeds) / C**.5)
         # prob_topics = F.softmax(dmatrix, dim=-1)
 
         # feat_topics = torch.zeros_like(dmatrix).scatter_(-1, torch.argmax(dmatrix, dim=-1, keepdim=True), 1.0)
@@ -186,4 +262,4 @@ class TopicFormer(nn.Module):
         # else:
         #     topic_matrix = {"img0": feat_topics[:, :L], "img1": feat_topics[:, L:]}
 
-        return self.out(feat0), self.out(feat1), seeds
+        return self.norm(feat0), self.norm(feat1), seeds #, (prob_topics[:, :L], prob_topics[:, L:])

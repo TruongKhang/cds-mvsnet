@@ -7,10 +7,10 @@ from datasets.data_io import *
 
 s_h, s_w = 0, 0
 class MVSDataset(Dataset):
-    def __init__(self, datapath, listfile, mode, nviews, ndepths=192, interval_scale=1.06, **kwargs):
+    def __init__(self, datapath, scene_list, mode, nviews, ndepths=192, interval_scale=1.06, **kwargs):
         super(MVSDataset, self).__init__()
         self.datapath = datapath
-        self.listfile = listfile
+        self.scene_list = scene_list
         self.mode = mode
         self.nviews = nviews
         self.ndepths = ndepths
@@ -26,7 +26,7 @@ class MVSDataset(Dataset):
 
     def build_list(self):
         metas = [] #{}
-        scans = self.listfile
+        scans = self.scene_list
 
         interval_scale_dict = {}
         # scans
@@ -95,6 +95,11 @@ class MVSDataset(Dataset):
 
     def scale_mvs_input(self, img, intrinsics, max_w, max_h, base=64):
         h, w = img.shape[:2]
+        if max_h == -1:
+            max_h = h
+        if max_w == -1:
+            max_w = w
+            
         if h > max_h or w > max_w:
             scale = 1.0 * max_h / h
             if scale * w > max_w:

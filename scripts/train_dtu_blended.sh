@@ -20,12 +20,12 @@ torch_num_workers=8
 python -u ./pl_train.py --config "configs/config_blended.json" \
     --n_gpus=${n_gpus} \
     --batch_size=1 --val_batch_size=1 --num_workers=${torch_num_workers} \
-    --max_epochs=40 --ckpt_path="logs/tb_logs/dtu/version_6/checkpoints/last.ckpt"
+    --max_epochs=25 --ckpt_path="logs/tb_logs/dtu/version_67/checkpoints/last.ckpt" #"logs/tb_logs/dtu/version_55/checkpoints/last.ckpt" #"logs/tb_logs/dtu/version_23/checkpoints/last.ckpt"
 
 # python -u ./pl_train.py --config ${main_cfg_path} \
 #     --n_gpus=${n_gpus} \
 #     --batch_size=1 --val_batch_size=1 --num_workers=${torch_num_workers} \
-#     --max_epochs=15 --ckpt_path="logs/tb_logs/finetuning_blendedmvs/version_5/checkpoints/last.ckpt"
+#     --max_epochs=10 --ckpt_path="logs/tb_logs/finetuning_blendedmvs/version_37/checkpoints/last.ckpt"
 
 
 # python -u ./pl_train.py --config ${main_cfg_path} \

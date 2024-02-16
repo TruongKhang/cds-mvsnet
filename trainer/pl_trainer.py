@@ -4,7 +4,7 @@ import torch
 import pytorch_lightning as pl
 from pytorch_lightning.profilers import PassThroughProfiler
 
-from models import CDSMVSNet
+from models.model import CDSMVSNet
 from models.losses import final_loss
 from utils import AbsDepthError_metrics, Thres_metrics, DictAverageMeter, tensor2float
 
@@ -18,22 +18,16 @@ class PL_Trainer(pl.LightningModule):
         self.profiler = profiler or PassThroughProfiler()
 
         # initialize model
+        self.pretrained_ckpt_path = ckpt_path
         self.model = CDSMVSNet(**config["arch"]["args"])
-        if ckpt_path is not None:
-            print('Loading checkpoint: {} ...'.format(ckpt_path))
-            checkpoint = torch.load(str(ckpt_path))
-            state_dict = checkpoint['state_dict']
-            new_state_dict = {}
-            for key, val in state_dict.items():
-                new_key = key.replace('module.', '')
-                new_state_dict[new_key] = val
-                if "refine_network" in new_key:
-                    del new_state_dict[new_key]
-            self.model.load_state_dict(new_state_dict, strict=True)
+        # self.model.load_pretrained_model(ckpt_path)
         
         self.loss_func = final_loss
 
         self.validation_step_outputs = {}
+
+    def setup(self, stage):
+        self.model.load_pretrained_model(self.pretrained_ckpt_path)
 
     def configure_optimizers(self):
         optim_name = self.config["optimizer"]["type"]
@@ -76,6 +70,7 @@ class PL_Trainer(pl.LightningModule):
             imgs, cam_params = batch["imgs"], batch["proj_matrices"]
             depth_values = batch["depth_values"]
             depth_interval = depth_values[:, 1] - depth_values[:, 0]
+            # depth_range = depth_values[:, -1] - depth_values[:, 0]
             outputs = self.model(imgs, cam_params, depth_values, gt_depths=depth_gt_ms, temperature=temperature)
 
         # with self.profiler.profile("loss computation"):

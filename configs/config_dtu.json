@@ -6,10 +6,10 @@
         "type": "CDSMVSNet",
         "args": {
             "num_stages": 4,
-            "ndepths": [64, 32, 8, 4],
-            "depth_interals_ratio": [4.0, 2.0, 1.0, 1.0],
+            "depth_hypotheses": [64, 24, 8, 4],
+            "depth_intervals_ratio": [4.0, 3.0, 2.0, 1.0],
             "share_cr": false,
-            "cr_base_chs": [16, 8, 8, 8],
+            "cr_base_chs": [8, 8, 8, 8],
             "grad_method": "detach"
         }
     },
@@ -21,7 +21,7 @@
             "train_data_list": "lists/dtu/train.txt",
             "val_data_list": "lists/dtu/val.txt",
             "mode": "train",
-            "num_srcs": 3,
+            "num_srcs": 4,
             "num_depths": 256,
             "interval_scale": 0.8,
             "shuffle": true
@@ -29,9 +29,9 @@
       }
     ],
     "optimizer": {
-        "type": "SGD",
+        "type": "AdamW",
         "args":{
-            "lr": 0.01,
+            "lr": 0.001,
             "weight_decay": 0.01
         }
     },
@@ -39,7 +39,7 @@
     "lr_scheduler": {
         "type": "StepLR",
         "args": {
-            "step_size": 4,
+            "step_size": 5,
             "gamma": 0.5
         }
     },

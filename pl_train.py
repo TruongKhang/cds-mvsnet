@@ -15,7 +15,6 @@ from pytorch_lightning.strategies import DDPStrategy
 from pytorch_lightning.profilers import SimpleProfiler, PassThroughProfiler
 from contextlib import contextmanager
 
-from parse_config import ConfigParser
 from datasets import data_loaders
 from trainer.pl_trainer import PL_Trainer
 from utils import read_json
@@ -95,7 +94,7 @@ class InferenceProfiler(SimpleProfiler):
         self.summary = rank_zero_only(self.summary)
 
     @contextmanager
-    def profile(self, action_name: str) -> None:
+    def profile(self, action_name: str):
         try:
             torch.cuda.synchronize()
             self.start(action_name)
@@ -130,7 +129,7 @@ def main():
     
     # lightning module
     profiler = build_profiler(args.profiler_name)
-    model = PL_Trainer(config, profiler=None) # , ckpt_path=args.ckpt_path)
+    model = PL_Trainer(config, profiler=None) #, ckpt_path=args.ckpt_path)
     loguru_logger.info(f"Model LightningModule initialized!")
     
     # lightning data
