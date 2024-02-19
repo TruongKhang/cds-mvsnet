@@ -160,8 +160,14 @@ def vis_filter_dynamic(ref_depth, reproj_xyd, dist_base=4, rel_diff_base=1300):
     corrd_diff = (reproj_xyd[:, :, :2, :, :] - xy).norm(dim=2, keepdim=True) # nv1hw
     depth_diff = (ref_depth.unsqueeze(1) - reproj_xyd[:, :, 2:, :, :]).abs()  / ref_depth.unsqueeze(1) # nv1hw
 
-    dist_thred = torch.arange(2,v+1).reshape(1,1,-1,1,1).repeat(n,v,1,1,1).to(device) / dist_base
-    relative_dist_thred = torch.arange(2,v+1).reshape(1,1,-1,1,1).repeat(n,v,1,1,1).to(device) / rel_diff_base
+    if v > 1:
+        dist_thred = torch.arange(2,v+1).reshape(1,1,-1,1,1).repeat(n,v,1,1,1).to(device) / dist_base
+        relative_dist_thred = torch.arange(2,v+1).reshape(1,1,-1,1,1).repeat(n,v,1,1,1).to(device) / rel_diff_base
+    else:
+        dist_thred = 0.5
+        relative_dist_thred = 0.005
+    # dist_thred = torch.arange(2,v+1).reshape(1,1,-1,1,1).repeat(n,v,1,1,1).to(device) / dist_base
+    # relative_dist_thred = torch.arange(2,v+1).reshape(1,1,-1,1,1).repeat(n,v,1,1,1).to(device) / rel_diff_base
     masks = torch.min(corrd_diff<dist_thred, depth_diff < relative_dist_thred) # [n,v,v-1, h,w]
     mask = masks[:,:,-1:,:,:] # [n,v,1,h,w]
 

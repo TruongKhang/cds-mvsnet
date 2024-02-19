@@ -96,7 +96,7 @@ class StageNet(nn.Module):
 
         prob_volume = F.softmax(prob_volume_pre, dim=1)
         depth = depth_regression(prob_volume, depth_values=depth_values)
-        photometric_confidence = conf_regression(prob_volume, n=(4 - stage_idx))
+        photometric_confidence = conf_regression(prob_volume, n=(4 - stage_idx) if stage_idx < 3 else 2)
 
         # return {"depth": depth,  "photometric_confidence": photometric_confidence, "feat_distance": feat_distance_vol, "learned_topics": learned_topics} if self.training else {"depth": depth,  "photometric_confidence": photometric_confidence, "learned_topics": learned_topics}
         return {"depth": depth,  "photometric_confidence": photometric_confidence, "learned_topics": learned_topics}

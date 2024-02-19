@@ -50,7 +50,10 @@ class MVSDataset(Dataset):
                     if len(src_views) > 0:
                         if len(src_views) < self.nviews:
                             print("{}< num_views:{}".format(len(src_views), self.nviews))
-                            src_views += [src_views[0]] * (self.nviews - len(src_views))
+                            t = self.nviews // len(src_views)
+                            r = self.nviews % len(src_views)
+                            src_views = src_views * t + src_views[:r]
+                            # src_views += [src_views[0]] * (self.nviews - len(src_views))
                         src_views = src_views[:(self.nviews-1)]
                         metas.append((scan, ref_view, src_views, scan))
 

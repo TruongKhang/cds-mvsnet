@@ -8,6 +8,7 @@ def read_pfm(filename):
     color = None
     width = None
     height = None
+    channel = None
     scale = None
     endian = None
 
@@ -19,9 +20,9 @@ def read_pfm(filename):
     else:
         raise Exception('Not a PFM file.')
 
-    dim_match = re.match(r'^(\d+)\s(\d+)\s$', file.readline().decode('utf-8'))
+    dim_match = re.match(r'^(\d+)\s(\d+)\s(\d+)\s$', file.readline().decode('utf-8'))
     if dim_match:
-        width, height = map(int, dim_match.groups())
+        width, height, channel = map(int, dim_match.groups())
     else:
         raise Exception('Malformed PFM header.')
 
@@ -33,7 +34,7 @@ def read_pfm(filename):
         endian = '>'  # big-endian
 
     data = np.fromfile(file, endian + 'f')
-    shape = (height, width, 3) if color else (height, width)
+    shape = (height, width, channel) if color else (height, width)
 
     data = np.reshape(data, shape)
     data = np.flipud(data)
@@ -49,16 +50,19 @@ def save_pfm(filename, image, scale=1):
 
     if image.dtype.name != 'float32':
         raise Exception('Image dtype must be float32.')
-
-    if len(image.shape) == 3 and image.shape[2] == 3:  # color image
-        color = True
+    channel = None
+    if len(image.shape) == 3 and image.shape[2] >= 2:  # color image
+        color, channel = True, image.shape[2]
     elif len(image.shape) == 2 or len(image.shape) == 3 and image.shape[2] == 1:  # greyscale
-        color = False
+        color, channel = False, 1
     else:
         raise Exception('Image must have H x W x 3, H x W x 1 or H x W dimensions.')
 
     file.write('PF\n'.encode('utf-8') if color else 'Pf\n'.encode('utf-8'))
-    file.write('{} {}\n'.format(image.shape[1], image.shape[0]).encode('utf-8'))
+    # if color:
+    file.write('{} {} {}\n'.format(image.shape[1], image.shape[0], channel).encode('utf-8'))
+    # else:
+    #     file.write('{} {}\n'.format(image.shape[1], image.shape[0]).encode('utf-8'))
 
     endian = image.dtype.byteorder
 
