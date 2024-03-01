@@ -47,7 +47,7 @@ class BlendedMVSDataset(Dataset):
         self.interval_scale = interval_scale
         self.kwargs = kwargs
         self.img_aug = ImgAug()
-        self.geo_aug = GeometricSequential(KA.RandomAffine(degrees=90, p=0.3)) if mode == "train" else None
+        self.geo_aug = None # GeometricSequential(KA.RandomAffine(degrees=90, p=0.3)) if mode == "train" else None
 
         assert self.mode in ["train", "val", "test"]
         self.metas = self.build_list()
@@ -119,7 +119,7 @@ class BlendedMVSDataset(Dataset):
 
     def prepare_img(self, img):
         h, w = img.shape[:2]
-        target_h, target_w = 512, 768 #576, 768
+        target_h, target_w = 512, 768
         start_h, start_w = (h - target_h)//2, (w - target_w)//2
         img_crop = img[start_h: start_h + target_h, start_w: start_w + target_w]
         return img_crop

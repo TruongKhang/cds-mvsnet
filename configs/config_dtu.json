@@ -6,11 +6,11 @@
         "type": "CDSMVSNet",
         "args": {
             "num_stages": 4,
-            "depth_hypotheses": [64, 24, 8, 4],
-            "depth_intervals_ratio": [4.0, 3.0, 2.0, 1.0],
+            "depth_hypotheses": [48, 24, 8, 4],
+            "depth_intervals_ratio": [4.0, 2.0, 1.0, 0.75],
             "share_cr": false,
             "cr_base_chs": [8, 8, 8, 8],
-            "grad_method": "detach"
+            "pretrained_fpn": false
         }
     },
     "data_loader": [
@@ -22,8 +22,8 @@
             "val_data_list": "lists/dtu/val.txt",
             "mode": "train",
             "num_srcs": 4,
-            "num_depths": 256,
-            "interval_scale": 0.8,
+            "num_depths": 192,
+            "interval_scale": 1.06,
             "shuffle": true
         }
       }

@@ -17,11 +17,12 @@ def final_loss(inputs, depth_gt_ms, mask_ms, **kwargs):
         mask = mask_ms[stage_key]
         mask = mask > 0.5
 
-        depth_loss = F.smooth_l1_loss(depth_est[mask], depth_gt[mask], reduction='mean')
+        depth_loss = F.l1_loss(depth_est[mask], depth_gt[mask], reduction='mean')
 
-        norm_curv_reg = 0.0
-        if "norm_curv" in stage_inputs:
-            norm_curv_reg = torch.mean(stage_inputs["norm_curv"].squeeze(1)[mask])
+        init_depth_loss = 0.0
+        if "init_depth" in stage_inputs:
+            init_depth = stage_inputs["init_depth"] / depth_interval
+            init_depth_loss = F.l1_loss(init_depth[mask], depth_gt[mask], reduction='mean')
 
         feat_loss = 0.0
         if "feat_distance" in stage_inputs:
@@ -36,8 +37,8 @@ def final_loss(inputs, depth_gt_ms, mask_ms, **kwargs):
                                                            pos_weight=balanced_weight)
         if depth_loss_weights is not None:
             stage_idx = int(stage_key.replace("stage", "")) - 1
-            total_loss = total_loss + depth_loss_weights[stage_idx] * (depth_loss + 5 * feat_loss + 0.1*norm_curv_reg)
+            total_loss = total_loss + depth_loss_weights[stage_idx] * (depth_loss + 5 * feat_loss + 0.1 * init_depth_loss)
         else:
-            total_loss += 1.0 * (depth_loss+ 5 * feat_loss + 0.1*norm_curv_reg)
+            total_loss += 1.0 * (depth_loss+ 5 * feat_loss + 0.1 * init_depth_loss)
 
     return total_loss, depth_loss

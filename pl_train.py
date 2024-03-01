@@ -10,7 +10,7 @@ import pytorch_lightning as pl
 from pytorch_lightning.utilities import rank_zero_only
 from pytorch_lightning.utilities.combined_loader import CombinedLoader
 from pytorch_lightning.loggers import TensorBoardLogger
-from pytorch_lightning.callbacks import ModelCheckpoint
+from pytorch_lightning.callbacks import ModelCheckpoint, StochasticWeightAveraging
 from pytorch_lightning.strategies import DDPStrategy
 from pytorch_lightning.profilers import SimpleProfiler, PassThroughProfiler
 from contextlib import contextmanager
@@ -33,6 +33,8 @@ def parse_args():
     parser.add_argument(
         '--batch_size', type=int, default=2, help='batch_size per gpu')
     parser.add_argument(
+        '--accumulate_grad_batches', type=int, default=4, help='accumulate gradient')
+    parser.add_argument(
         '--val_batch_size', type=int, default=2, help='batch_size per gpu')
     parser.add_argument(
         '--num_workers', type=int, default=4)
@@ -48,11 +50,8 @@ def parse_args():
     parser.add_argument(
         '--profiler_name', type=str, default=None,
         help='options: [inference, pytorch], or leave it unset')
-    # parser.add_argument(
-    #     '--disable_refinement', action='store_true',
-    #     help='disable refinement at last stage).')
-    # parser.add_argument('--resume', default=None, type=str, help='path to latest checkpoint (default: None)')
-    # parser.add_argument('--device', default=None, type=str, help='indices of GPUs to enable (default: all)')
+    parser.add_argument(
+        '--num_views', type=int, default=3)
 
     # parser = pl.Trainer.add_argparse_args(parser)
     return parser.parse_args()
@@ -68,7 +67,7 @@ def get_list_dataloaders(args, config, mode="train"):
         del dl_args["train_data_list"], dl_args["val_data_list"]
     
         if mode == "train":
-            dl_args.update({"batch_size": args.batch_size, "num_workers": args.num_workers, 
+            dl_args.update({"batch_size": args.batch_size, "num_workers": args.num_workers, "num_srcs": args.num_views,
                             "num_stages": config["arch"]["args"]["num_stages"]})
         elif mode == "val":
             dl_args.update({"mode": "val", "num_srcs": 5, "shuffle": False, 
@@ -148,7 +147,7 @@ def main():
                                     dirpath=str(ckpt_dir),
                                     filename='{epoch}-{id0_abs_depth_error:.3f}-{id0_prec@2mm:.3f}-{id0_prec@4mm:.3f}-{id0_prec@8mm:.3f}')
     # lr_monitor = LearningRateMonitor(logging_interval='step')
-    callbacks = []
+    callbacks = [] # StochasticWeightAveraging(swa_lrs=1e-2)]
     if not args.disable_ckpt:
         callbacks.append(ckpt_callback)
     
@@ -157,7 +156,8 @@ def main():
         accelerator="gpu", devices=args.n_gpus, precision=32,
         check_val_every_n_epoch=1,
         # log_every_n_steps=7000,
-        limit_val_batches=1., num_sanity_val_steps=10, 
+        accumulate_grad_batches=args.accumulate_grad_batches,
+        limit_val_batches=1., num_sanity_val_steps=10,
         benchmark=True,
         max_epochs=args.max_epochs,
         strategy=DDPStrategy(find_unused_parameters=False),

@@ -21,7 +21,7 @@ parser.add_argument('--config_path', default=None, type=str, help='config file p
 parser.add_argument('--dataset', default='dtu', help='select dataset')
 parser.add_argument('--testpath', help='testing data dir for some scenes')
 parser.add_argument('--testlist', help='testing scene list')
-parser.add_argument('--interval_scale', type=float, required=True, help='the depth interval scale')
+parser.add_argument('--interval_scale', type=float, default=1.0, required=True, help='the depth interval scale')
 parser.add_argument('--n_views', type=int, default=3, help='num of view')
 parser.add_argument('--max_h', type=int, default=-1, help='testing max h')
 parser.add_argument('--max_w', type=int, default=-1, help='testing max w')

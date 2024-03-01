@@ -6,11 +6,11 @@
         "type": "CDSMVSNet",
         "args": {
             "num_stages": 4,
-            "depth_hypotheses": [64, 24, 8, 4],
-            "depth_intervals_ratio": [3.0, 2.0, 1.0, 0.75],
+            "depth_hypotheses": [48, 24, 8, 4],
+            "depth_intervals_ratio": [4.0, 2.0, 1.0, 0.75],
             "share_cr": false,
             "cr_base_chs": [8, 8, 8, 8],
-            "grad_method": "detach"
+            "pretrained_fpn": false
         }
     },
     "data_loader": [
@@ -21,7 +21,7 @@
           "train_data_list": "lists/blended/training_list.txt",
           "val_data_list": "lists/blended/validation_list.txt",
           "mode": "train",
-          "num_srcs": 4,
+          "num_srcs": 3,
           "num_depths": 192,
           "interval_scale": 1.06,
           "shuffle": true
@@ -31,7 +31,7 @@
     "optimizer": {
         "type": "AdamW",
         "args":{
-            "lr": 0.0001,
+            "lr": 0.0002,
             "weight_decay": 0.01
         }
     },
