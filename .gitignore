@@ -138,3 +138,4 @@ move.py
 *.pth
 logs/
 pretrained/
+fusibile/

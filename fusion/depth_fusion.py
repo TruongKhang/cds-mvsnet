@@ -58,19 +58,19 @@ def read_pair_file(filename):
 
 
 class MVSRGBD(Dataset):
-    def __init__(self, pair_folder, scan_folder, n_src_views=10):
+    def __init__(self, pair_folder, scan_folder, n_views=10):
         super(MVSRGBD, self).__init__()
         pair_file = os.path.join(pair_folder, "pair.txt")
         self.scan_folder = scan_folder
         self.pair_data = read_pair_file(pair_file)
-        self.n_src_views = n_src_views
+        self.n_views = n_views
 
     def __len__(self):
         return len(self.pair_data)
 
     def __getitem__(self, idx):
         id_ref, id_srcs = self.pair_data[idx]
-        id_srcs = id_srcs[:self.n_src_views]
+        id_srcs = id_srcs[:self.n_views]
 
         ref_intrinsics, ref_extrinsics = read_camera_parameters(
             os.path.join(self.scan_folder, 'cams/{:0>8}_cam.txt'.format(id_ref)))
@@ -116,14 +116,14 @@ class MVSRGBD(Dataset):
 
 
 def main(mvs_rgbd_dir, img_pair_dir, plyfilename, config, device=torch.device("cpu")):
-    if config["method"] == "standard":
-        mvsrgbd_dataset = MVSRGBD(img_pair_dir, mvs_rgbd_dir, n_src_views=config.n_src_views)
+    if config.filter_method in ["pcd", "dpcd"]:
+        mvsrgbd_dataset = MVSRGBD(img_pair_dir, mvs_rgbd_dir, n_views=config.n_views)
         sampler = SequentialSampler(mvsrgbd_dataset)
         dataloader = DataLoader(mvsrgbd_dataset, batch_size=1, shuffle=False, sampler=sampler, num_workers=2,
                                pin_memory=True, drop_last=False)
         views = {}
-        prob_threshold = config.conf_thr
-        # prob_threshold = [float(p) for p in prob_threshold.split(',')]
+        # prob_threshold = config.conf_thr
+        prob_threshold = [float(p) for p in config.conf_thr.split(',')]
         for batch_idx, sample_np in enumerate(dataloader):
             sample = tocuda(sample_np)
             # for ids in range(sample["src_depths"].size(1)):
@@ -132,39 +132,41 @@ def main(mvs_rgbd_dir, img_pair_dir, plyfilename, config, device=torch.device("c
 
             prob_mask = utils.prob_filter(sample['ref_conf'], prob_threshold)
 
-            reproj_xyd, in_range = utils.get_reproj(
-                *[sample[attr] for attr in ['ref_depth', 'src_depths', 'ref_cam', 'src_cams']])
-            vis_masks, vis_mask = utils.vis_filter(sample['ref_depth'], reproj_xyd, in_range, config.disp_thr, 0.003, config.nview_thr)
+            if config.filter_method == "pcd":
+                reproj_xyd, in_range = utils.get_reproj(
+                    *[sample[attr] for attr in ['ref_depth', 'src_depths', 'ref_cam', 'src_cams']])
+                vis_masks, vis_mask = utils.vis_filter(sample['ref_depth'], reproj_xyd, in_range, config.disp_thr, 0.003, config.nview_thr)
 
-            ref_depth_ave = utils.ave_fusion(sample['ref_depth'], reproj_xyd, vis_masks)
+                ref_depth_ave = utils.ave_fusion(sample['ref_depth'], reproj_xyd, vis_masks)
 
-            # ref_depth = sample['ref_depth']  # [n 1 h w ]
-            # reproj_xyd = utils.get_reproj_dynamic(*[sample[attr] for attr in ['ref_depth', 'src_depths', 'ref_cam', 'src_cams']])
-            # # reproj_xyd   nv 3 h w
+                mask = utils.bin_op_reduce([prob_mask, vis_mask], torch.min)
+                idx_img = utils.get_pixel_grids(*ref_depth_ave.size()[-2:]).unsqueeze(0)
+                idx_cam = utils.idx_img2cam(idx_img, ref_depth_ave, sample['ref_cam'])
+                points = utils.idx_cam2world(idx_cam, sample['ref_cam'])[..., :3, 0].permute(0, 3, 1, 2)
+            else:
+                ref_depth = sample['ref_depth']  # [n 1 h w ]
+                reproj_xyd = utils.get_reproj_dynamic(*[sample[attr] for attr in ['ref_depth', 'src_depths', 'ref_cam', 'src_cams']])
+                # reproj_xyd   nv 3 h w
 
-            # # 4 1300
-            # vis_masks, vis_mask = utils.vis_filter_dynamic(sample['ref_depth'], reproj_xyd, dist_base=4, rel_diff_base=1300)
+                # 4 1300
+                vis_masks, vis_mask = utils.vis_filter_dynamic(sample['ref_depth'], reproj_xyd, dist_base=4, rel_diff_base=1300)
 
-            # # mask reproj_depth
-            # reproj_depth = reproj_xyd[:, :, -1]  # [1 v h w]
-            # reproj_depth[~vis_mask.squeeze(2)] = 0  # [n v h w ]
-            # geo_mask_sums = vis_masks.sum(dim=1)  # 0~v
-            # geo_mask_sum = vis_mask.sum(dim=1)
-            # depth_est_averaged = (torch.sum(reproj_depth, dim=1, keepdim=True) + ref_depth) / (geo_mask_sum + 1)  # [1,1,h,w]
-            # num_src_views = sample['src_depths'].shape[1]
-            # dy_range = num_src_views + 1
-            # geo_mask = geo_mask_sum >= dy_range  # all zero
-            # for i in range(2, dy_range):
-            #     geo_mask = torch.logical_or(geo_mask, geo_mask_sums[:, i - 2] >= i)
-            # mask = utils.bin_op_reduce([prob_mask, geo_mask], torch.min)
-            # idx_img = utils.get_pixel_grids(*depth_est_averaged.size()[-2:]).unsqueeze(0)
-            # idx_cam = utils.idx_img2cam(idx_img, depth_est_averaged, sample['ref_cam'])
-            # points = utils.idx_cam2world(idx_cam, sample['ref_cam'])[..., :3, 0].permute(0, 3, 1, 2)
-
-            mask = utils.bin_op_reduce([prob_mask, vis_mask], torch.min)
-            idx_img = utils.get_pixel_grids(*ref_depth_ave.size()[-2:]).unsqueeze(0)
-            idx_cam = utils.idx_img2cam(idx_img, ref_depth_ave, sample['ref_cam'])
-            points = utils.idx_cam2world(idx_cam, sample['ref_cam'])[..., :3, 0].permute(0, 3, 1, 2)
+                # mask reproj_depth
+                reproj_depth = reproj_xyd[:, :, -1]  # [1 v h w]
+                reproj_depth[~vis_mask.squeeze(2)] = 0  # [n v h w ]
+                geo_mask_sums = vis_masks.sum(dim=1)  # 0~v
+                geo_mask_sum = vis_mask.sum(dim=1)
+                depth_est_averaged = (torch.sum(reproj_depth, dim=1, keepdim=True) + ref_depth) / (geo_mask_sum + 1)  # [1,1,h,w]
+                num_src_views = sample['src_depths'].shape[1]
+                dy_range = num_src_views + 1
+                geo_mask = geo_mask_sum >= dy_range  # all zero
+                for i in range(2, dy_range):
+                    geo_mask = torch.logical_or(geo_mask, geo_mask_sums[:, i - 2] >= i)
+            
+                mask = utils.bin_op_reduce([prob_mask, geo_mask], torch.min)
+                idx_img = utils.get_pixel_grids(*depth_est_averaged.size()[-2:]).unsqueeze(0)
+                idx_cam = utils.idx_img2cam(idx_img, depth_est_averaged, sample['ref_cam'])
+                points = utils.idx_cam2world(idx_cam, sample['ref_cam'])[..., :3, 0].permute(0, 3, 1, 2)
 
             points_np = points.cpu().data.numpy()
             mask_np = mask.cpu().data.numpy().astype(bool)
@@ -197,7 +199,7 @@ def main(mvs_rgbd_dir, img_pair_dir, plyfilename, config, device=torch.device("c
         el = PlyElement.describe(vertex_all, 'vertex')
         PlyData([el]).write(plyfilename)
         print("saving the final model to", plyfilename)
-    elif config["method"] == "gipuma":
+    elif config.filter_method == "gipuma":
         prob_threshold = config.conf_thr
         # prob_threshold = [float(p) for p in prob_threshold.split(',')]
         work_dir, scene = os.path.split(mvs_rgbd_dir)

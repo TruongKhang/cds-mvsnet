@@ -16,7 +16,7 @@ cudnn.benchmark = True
 
 parser = argparse.ArgumentParser(description='Predict depth, filter, and fuse')
 parser.add_argument('--device', default=None, type=str, help='indices of GPUs to enable (default: all)')
-parser.add_argument('--config_path', default=None, type=str, help='config file path (default: None)')
+parser.add_argument('--config_path', default="configs/config_blended.json", type=str, help='config file path (default: None)')
 
 parser.add_argument('--dataset', default='dtu', help='select dataset')
 parser.add_argument('--testpath', help='testing data dir for some scenes')
@@ -35,14 +35,14 @@ parser.add_argument('--display', action='store_true', help='display depth images
 
 parser.add_argument('--depth_hypotheses', type=str, default=None, help='ndepths')
 parser.add_argument('--depth_inter_ratio', type=str, default=None, help='depth_intervals_ratio')
-
+parser.add_argument('--num_stages', type=int, default=4, help='number of cascade stages')
 parser.add_argument('--num_workers', type=int, default=4, help='depth_filer worker')
 # parser.add_argument('--save_freq', type=int, default=20, help='save freq of local pcd')
 
-parser.add_argument('--filter_method', type=str, default='pcd', choices=["gipuma", "pcd"], help="filter method")
+parser.add_argument('--filter_method', type=str, default='pcd', choices=["gipuma", "pcd", "dpcd"], help="filter method")
 
 # filter
-parser.add_argument('--conf_thr', type=str, default='0.5,0.5,0.5', help='prob confidence')
+parser.add_argument('--conf_thr', type=str, default='0.5,0.5,0.5,0.5', help='prob confidence')
 parser.add_argument('--nview_thr', type=int, default=3, help='threshold of num view')
 parser.add_argument('--disp_thr', type=float, default=1.0, help='threshold of disparity')
 parser.add_argument('--downsample', type=float, default=None, help='downsampling point cloud')
@@ -87,8 +87,8 @@ def build_3d_model(args, config, scene_list):
     model_kwargs = config["arch"]["args"]
     if args.depth_hypotheses is not None:
         model_kwargs["depth_hypotheses"] = [int(nd) for nd in str(args.depth_hypotheses).split(",")]
-    if args.depth_intervals_ratio is not None:
-        model_kwargs["depth_intervals_ratio"] = [float(r) for r in str(args.depth_intervals_ratio).split(",")]
+    if args.depth_inter_ratio is not None:
+        model_kwargs["depth_intervals_ratio"] = [float(r) for r in str(args.depth_inter_ratio).split(",")]
     
     print("model params: ", model_kwargs)
     model = CDSMVSNet(**model_kwargs)
@@ -138,7 +138,7 @@ def build_3d_model(args, config, scene_list):
             num_stages = args.num_stages
             imgs, cam_params = sample_cuda["imgs"], sample_cuda["proj_matrices"]
             outputs = model(imgs, cam_params, sample_cuda["depth_values"])
-            torch.cuda.synchronize()
+            # torch.cuda.synchronize()
             # outputs["ps_map"] = model.feature.extract_ps_map()
 
             end_time = time.time()
@@ -153,10 +153,10 @@ def build_3d_model(args, config, scene_list):
                                                       outputs["out_depth"][0].shape))
 
             # save depth maps and confidence maps
-            for filename, cam, img, depth_est, conf_stage1, conf_stage2, conf_stage3 in zip(filenames, cams, imgs, outputs["out_depth"],
+            for filename, cam, img, depth_est, conf_stage1, conf_stage2, conf_stage3, conf_stage4 in zip(filenames, cams, imgs, outputs["out_depth"],
                                                                                             outputs["stage1"]["photometric_confidence"], 
                                                                                             outputs["stage2"]["photometric_confidence"],
-                                                                                            outputs["stage3"]["photometric_confidence"]): #, outputs["ps_map"]):
+                                                                                            outputs["stage3"]["photometric_confidence"], outputs["stage4"]["photometric_confidence"]): #, outputs["ps_map"]):
                 img = img[0]  # ref view
                 cam = cam[0]  # ref cam
                 depth_filename = os.path.join(args.outdir, filename.format('depth_est', '.pfm'))
@@ -176,7 +176,8 @@ def build_3d_model(args, config, scene_list):
                 conf_stage1 = cv2.resize(conf_stage1, (w, h), interpolation=cv2.INTER_NEAREST)
                 conf_stage2 = cv2.resize(conf_stage2, (w, h), interpolation=cv2.INTER_NEAREST)
                 conf_stage3 = cv2.resize(conf_stage3, (w, h), interpolation=cv2.INTER_NEAREST)
-                photometric_confidence = np.stack([conf_stage1, conf_stage2, conf_stage3]).transpose([1,2,0])
+                conf_stage4 = cv2.resize(conf_stage4, (w, h), interpolation=cv2.INTER_NEAREST)
+                photometric_confidence = np.stack([conf_stage1, conf_stage2, conf_stage3, conf_stage4]).transpose([1,2,0])
                 save_pfm(confidence_filename, photometric_confidence)
                 # save cams, img
                 img = np.transpose(img, (1, 2, 0))
@@ -192,8 +193,8 @@ def build_3d_model(args, config, scene_list):
     gc.collect()
 
     for scene_name in scene_list:
-        save_file = f'{args.out_dir}/{scene_name}.ply'
-        mvs_rgbd_dir = f'{args.out_dir}/{scene_name}'
+        save_file = f'{args.outdir}/{scene_name}.ply'
+        mvs_rgbd_dir = f'{args.outdir}/{scene_name}'
         pair_folder = f'{args.testpath}/{scene_name}'
         
         depth_fusion.main(mvs_rgbd_dir, pair_folder, save_file, args, device)
@@ -211,4 +212,5 @@ if __name__ == '__main__':
     else:
         raise f"unknown {args.testlist}"
 
-    build_3d_model(args, config, scene_list)
+    for scene_name in scene_list:
+        build_3d_model(args, config, [scene_name])
