@@ -3,6 +3,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from timm.models.layers import DropPath
+from einops.einops import rearrange
+from positional_encodings.torch_encodings import PositionalEncoding1D, PositionalEncodingPermute2D, Summer
 
 
 class MLP(nn.Module):
@@ -169,12 +171,15 @@ class TopicFormer(nn.Module):
             self.layers = nn.ModuleList([copy.deepcopy(encoder_layer) for _ in range(len(self.layer_names))])
             self.seed_tokens = nn.Parameter(torch.randn(n_topics, dim))
             self.register_parameter('seed_tokens', self.seed_tokens)
-            self.topic_drop = nn.Dropout1d(p=0.1)
+            # self.topic_drop = nn.Dropout1d(p=0.1)
         else:
             # self.seed_tokens = topic_init
             self.emb_layer = nn.Linear(topic_dim, self.d_model, bias=False) if n_merge_layers > 0 else nn.Identity()
         
         self.norm = nn.LayerNorm(self.d_model) # nn.Tanh()
+
+        self.feat_pos_enc = Summer(PositionalEncodingPermute2D(self.d_model))
+        self.topic_pos_enc = Summer(PositionalEncoding1D(self.d_model))
 
         self._reset_parameters()
 
@@ -213,6 +218,11 @@ class TopicFormer(nn.Module):
         return resized_feat, new_mask, selected_ids
 
     def forward(self, feat0, feat1, topic_init=None):
+        if self.n_iter_topic_transformer > 0:
+            feat0, feat1 = self.feat_pos_enc(feat0), self.feat_pos_enc(feat1)
+        H0, H1 = feat0.shape[2], feat1.shape[2]
+        feat0 = rearrange(feat0, 'n c h w -> n (h w) c')
+        feat1 = rearrange(feat1, 'n c h w -> n (h w) c')
 
         assert self.d_model == feat0.shape[2], "the feature number of src and transformer must be equal"
         N, L, S, C, K = feat0.shape[0], feat0.shape[1], feat1.shape[1], feat0.shape[2], self.n_topics
@@ -221,12 +231,13 @@ class TopicFormer(nn.Module):
 
         if topic_init is None:
             seeds = self.seed_tokens.unsqueeze(0).repeat(N, 1, 1)
-            seeds = self.topic_drop(seeds)
+            seeds = self.topic_pos_enc(seeds)
 
             for layer, name in zip(self.layers, self.layer_names):
                 seeds = layer(seeds, feat)
         else:
             seeds = self.emb_layer(topic_init)
+            # seeds = self.topic_pos_enc(seeds)
 
         # dmatrix = torch.einsum("nmd,nkd->nmk", self.norm(feat), self.norm(seeds) / C**.5)
         # prob_topics = F.softmax(dmatrix, dim=-1)
@@ -261,5 +272,8 @@ class TopicFormer(nn.Module):
         #     topic_matrix = torch.einsum("nlk,nsk->nls", prob_topics[:, :L], prob_topics[:, L:])
         # else:
         #     topic_matrix = {"img0": feat_topics[:, :L], "img1": feat_topics[:, L:]}
+        
+        feat0 = rearrange(self.norm(feat0), "n (h w) c -> n c h w", h=H0)
+        feat1 = rearrange(self.norm(feat1), "n (h w) c -> n c h w", h=H1)
 
-        return self.norm(feat0), self.norm(feat1), seeds #, (prob_topics[:, :L], prob_topics[:, L:])
+        return feat0, feat1, seeds #, (prob_topics[:, :L], prob_topics[:, L:])

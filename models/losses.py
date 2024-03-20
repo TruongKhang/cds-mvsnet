@@ -17,12 +17,12 @@ def final_loss(inputs, depth_gt_ms, mask_ms, **kwargs):
         mask = mask_ms[stage_key]
         mask = mask > 0.5
 
-        depth_loss = F.l1_loss(depth_est[mask], depth_gt[mask], reduction='mean')
+        depth_loss = F.huber_loss(depth_est[mask], depth_gt[mask], reduction='mean', delta=1)
 
         init_depth_loss = 0.0
         if "init_depth" in stage_inputs:
             init_depth = stage_inputs["init_depth"] / depth_interval
-            init_depth_loss = F.l1_loss(init_depth[mask], depth_gt[mask], reduction='mean')
+            init_depth_loss = F.huber_loss(init_depth[mask], depth_gt[mask], reduction='mean', delta=1)
 
         feat_loss = 0.0
         if "feat_distance" in stage_inputs:

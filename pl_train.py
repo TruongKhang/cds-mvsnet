@@ -33,7 +33,7 @@ def parse_args():
     parser.add_argument(
         '--batch_size', type=int, default=2, help='batch_size per gpu')
     parser.add_argument(
-        '--accumulate_grad_batches', type=int, default=4, help='accumulate gradient')
+        '--accumulate_grad_batches', type=int, default=2, help='accumulate gradient')
     parser.add_argument(
         '--val_batch_size', type=int, default=2, help='batch_size per gpu')
     parser.add_argument(
@@ -52,6 +52,12 @@ def parse_args():
         help='options: [inference, pytorch], or leave it unset')
     parser.add_argument(
         '--num_views', type=int, default=3)
+    parser.add_argument(
+        '--high_res', action="store_true")
+    parser.add_argument(
+        '--random_image_scale', action="store_true")
+    parser.add_argument(
+        '--reload_dataloaders_every_n_epochs', type=int, default=0)
 
     # parser = pl.Trainer.add_argparse_args(parser)
     return parser.parse_args()
@@ -68,7 +74,8 @@ def get_list_dataloaders(args, config, mode="train"):
     
         if mode == "train":
             dl_args.update({"batch_size": args.batch_size, "num_workers": args.num_workers, "num_srcs": args.num_views,
-                            "num_stages": config["arch"]["args"]["num_stages"]})
+                            "num_stages": config["arch"]["args"]["num_stages"], 
+                            "high_res": args.high_res, "random_image_scale": args.random_image_scale})
         elif mode == "val":
             dl_args.update({"mode": "val", "num_srcs": 5, "shuffle": False, 
                             "batch_size": args.val_batch_size, "num_stages": config["arch"]["args"]["num_stages"]})
@@ -78,6 +85,45 @@ def get_list_dataloaders(args, config, mode="train"):
         list_dataloaders.append(dataloader)
 
     return list_dataloaders
+
+class DataModule(pl.LightningDataModule):
+    def __init__(self, args, config):
+        super().__init__()
+        self.args = args
+        self.config = config
+
+    def setup_(self, mode):
+        list_dataloaders = []
+        for info in self.config['data_loader']:
+            dataloader_name, dataset_args = info['type'], dict(info['args'])
+        
+            dl_args = dataset_args.copy()
+            dl_args["data_list"] = dataset_args[f"{mode}_data_list"]
+            del dl_args["train_data_list"], dl_args["val_data_list"]
+            if mode == "train":
+                dl_args.update({"batch_size": self.args.batch_size, "num_workers": self.args.num_workers, 
+                                "num_srcs": self.args.num_views, "num_stages": self.config["arch"]["args"]["num_stages"], 
+                                "high_res": self.args.high_res, "random_image_scale": self.args.random_image_scale})
+            else:
+            # val_dl_args = dataset_args.copy()
+            # val_dl_args["data_list"] = dataset_args[f"val_data_list"]
+            # del val_dl_args["train_data_list"], val_dl_args["val_data_list"]
+                dl_args.update({"mode": "val", "num_srcs": 5, "shuffle": False, "batch_size": self.args.val_batch_size, 
+                                "num_stages": self.config["arch"]["args"]["num_stages"]})
+
+            module = getattr(data_loaders, dataloader_name)()
+            dataloader = module.get(**dl_args)
+            list_dataloaders.append(dataloader)
+
+            # val_dataloader = module.get(**val_dl_args)
+            # self.list_val_dataloaders.append(val_dataloader)
+        return list_dataloaders
+
+    def train_dataloader(self):
+        return CombinedLoader(self.setup_("train"), mode="min_size")
+
+    def val_dataloader(self):
+        return CombinedLoader(self.setup_("val"), mode="sequential")
 
 
 class InferenceProfiler(SimpleProfiler):
@@ -128,12 +174,13 @@ def main():
     
     # lightning module
     profiler = build_profiler(args.profiler_name)
-    model = PL_Trainer(config, profiler=None) #, ckpt_path=args.ckpt_path)
+    model = PL_Trainer(config, profiler=None, ckpt_path=args.ckpt_path)
     loguru_logger.info(f"Model LightningModule initialized!")
     
     # lightning data
-    train_dataloaders = CombinedLoader(get_list_dataloaders(args, config, mode="train"), mode="min_size")
-    val_dataloaders = CombinedLoader(get_list_dataloaders(args, config, mode="val"), mode="sequential")
+    # train_dataloaders = CombinedLoader(get_list_dataloaders(args, config, mode="train"), mode="min_size")
+    # val_dataloaders = CombinedLoader(get_list_dataloaders(args, config, mode="val"), mode="sequential")
+    datamodule = DataModule(args, config)
     loguru_logger.info(f"Model DataModule initialized!")
     
     # TensorBoard Logger
@@ -165,12 +212,12 @@ def main():
         callbacks=callbacks,
         logger=logger,
         sync_batchnorm=True,
-        # replace_sampler_ddp=False,  # use custom sampler
-        reload_dataloaders_every_n_epochs=0,  # avoid repeated samples!
+        reload_dataloaders_every_n_epochs=args.reload_dataloaders_every_n_epochs, 
         profiler=profiler)
     loguru_logger.info(f"Trainer initialized!")
     loguru_logger.info(f"Start training!")
-    trainer.fit(model, train_dataloaders, val_dataloaders, ckpt_path=args.ckpt_path)
+    # trainer.fit(model, train_dataloaders, val_dataloaders) #, ckpt_path=args.ckpt_path)
+    trainer.fit(model, datamodule=datamodule)
 
 
 if __name__ == '__main__':

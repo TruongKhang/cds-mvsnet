@@ -38,12 +38,9 @@ class StageNet(nn.Module):
             # # extract features
             ref_fea, src_fea = feat["ref"], feat["src"]
             # if self.topicfm is not None:
-            ref_h, src_h = ref_fea.shape[2], src_fea.shape[2]
-            ref_fea = rearrange(ref_fea, 'n c h w -> n (h w) c')
-            src_fea = rearrange(src_fea, 'n c h w -> n (h w) c')
+            
             ref_fea, src_fea, topic = self.topicfm(ref_fea, src_fea, topic_init[src_idx])
-            ref_fea = rearrange(ref_fea, "n (h w) c -> n c h w", h=ref_h)
-            src_fea = rearrange(src_fea, "n (h w) c -> n c h w", h=src_h)
+            
             if stage_idx == 0:
                 learned_topics.append(topic)
 
@@ -149,15 +146,15 @@ class CDSMVSNet(nn.Module):
                     "scale": 1.0,
                 }
             }
-            cost_reg_levels = [3, 3, 2, 1]
+            cost_reg_levels = [3, 3, 2, 2]
 
         self.feature = FeatureNet(base_channels=12)
         if pretrained_fpn:
             print(f"Loading feature extractor from {pretrained_fpn}")
             state_dict = torch.load(pretrained_fpn)["state_dict"]
             self.feature.load_state_dict(state_dict)
-            for p in self.feature.parameters():
-                p.requires_grad = False
+        for p in self.feature.parameters():
+            p.requires_grad = False
         
         stage_nets = []
         nheads = [4,2,1,1]
@@ -167,17 +164,17 @@ class CDSMVSNet(nn.Module):
             if i == 0:
                 topicfm_cfg = {"n_topics": 256, "n_samples": 0, "n_merge_layers": 2, "attn_type": "linear"}
                 snet = StageNet(self.feature.out_channels[i], nheads[i], vis_net=vis_nets[i], topic_dim=None, **topicfm_cfg)
-            # elif i == (self.num_stages-1):
-            #     topicfm_cfg = {"n_samples": 0, "n_merge_layers": 0, "attn_type": "linear"}
-            #     snet = StageNet(self.feature.out_channels[i], nheads[i], topic_dim=self.feature.out_channels[0], **topicfm_cfg)
+            elif i == (self.num_stages-1):
+                topicfm_cfg = {"n_samples": 0, "n_merge_layers": 0, "attn_type": "linear"}
+                snet = StageNet(self.feature.out_channels[i], nheads[i], vis_net=vis_nets[i], topic_dim=self.feature.out_channels[0], **topicfm_cfg)
             else:
                 topicfm_cfg = {"n_samples": 0, "n_merge_layers": 1, "attn_type": "linear"}
                 snet= StageNet(self.feature.out_channels[i], nheads[i], vis_net=vis_nets[i], topic_dim=self.feature.out_channels[0], **topicfm_cfg)
             stage_nets.append(snet)
 
         self.stage_nets = nn.ModuleList(stage_nets)
-        # for p in self.stage_nets.parameters():
-        #     p.requires_grad = False
+        for p in self.stage_nets.parameters():
+            p.requires_grad = False
         
         if self.share_cr:
             self.cost_regularization = CostRegNet(in_channels=self.feature.out_channels, base_channels=8)

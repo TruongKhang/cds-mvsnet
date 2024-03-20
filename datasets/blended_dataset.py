@@ -48,6 +48,9 @@ class BlendedMVSDataset(Dataset):
         self.kwargs = kwargs
         self.img_aug = ImgAug()
         self.geo_aug = None # GeometricSequential(KA.RandomAffine(degrees=90, p=0.3)) if mode == "train" else None
+        if kwargs["random_image_scale"] is True:
+            self.image_scale = np.random.choice([0.5417, 0.5, 0.4115])
+            print("random image scale: ", self.image_scale)
 
         assert self.mode in ["train", "val", "test"]
         self.metas = self.build_list()
@@ -57,7 +60,6 @@ class BlendedMVSDataset(Dataset):
         with open(self.listfile) as f:
             scans = f.readlines()
             scans = [line.rstrip() for line in scans]
-        # scans = self.listfile
 
         interval_scale_dict = {}
         # scans
@@ -69,15 +71,17 @@ class BlendedMVSDataset(Dataset):
                 # viewpoints
                 for view_idx in range(num_viewpoint):
                     ref_view = int(f.readline().rstrip())
-                    src_views = [int(x) for x in f.readline().rstrip().split()[1::2]]
-                    src_views = [v for v in src_views if v != ref_view]
+                    line = f.readline().rstrip()
+                    src_views = [int(x) for x in line.split()[1::2]]
+                    scores = [float(x) for x in line.split()[2::2]]
+                    src_views = [src_views[i] for i, s in enumerate(scores) if (s > 0.1) and (src_views[i] != ref_view)]
 
                     # filter by no src view and fill to nviews
                     if len(src_views) > 2:
                         if len(src_views) < self.nviews:
                             print("{}< num_views:{}".format(len(src_views), self.nviews))
                             src_views += [src_views[0]] * (self.nviews - len(src_views))
-                        # src_views = src_views[:(self.nviews-1)]
+                        src_views = src_views[:(self.nviews-1)]
                         metas.append((scan, ref_view, src_views, scan))
 
         # self.interval_scale = interval_scale_dict
@@ -97,7 +101,8 @@ class BlendedMVSDataset(Dataset):
         intrinsics = np.fromstring(' '.join(lines[7:10]), dtype=np.float32, sep=' ').reshape((3, 3))
         
         # intrinsics[0, 2] -= 32.0
-        intrinsics[1, 2] -= 32.0
+        if not self.kwargs["high_res"]:
+            intrinsics[1, 2] -= 32.0 
         # intrinsics[:2, :] /= 4.0
         if H_mat is not None:
             K = torch.from_numpy(intrinsics).float()
@@ -120,6 +125,11 @@ class BlendedMVSDataset(Dataset):
     def prepare_img(self, img):
         h, w = img.shape[:2]
         target_h, target_w = 512, 768
+        if self.kwargs["high_res"]:
+            if self.mode == "train":
+                target_h, target_w = 1536, 2048
+            else:
+                target_h, target_w = 576, 768
         start_h, start_w = (h - target_h)//2, (w - target_w)//2
         img_crop = img[start_h: start_h + target_h, start_w: start_w + target_w]
         return img_crop
@@ -175,28 +185,6 @@ class BlendedMVSDataset(Dataset):
 
         return depth_ms, mask_ms
 
-    # def read_mask(self, filename, new_h, new_w):
-    #     depth = np.array(read_pfm(filename)[0], dtype=np.float32)
-    #     np_img = (depth > 0).astype(np.float32)
-    #     np_img = self.prepare_img(np_img)
-    #     np_img = cv2.resize(np_img, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
-
-    #     h, w = np_img.shape
-    #     if self.kwargs["num_stages"] == 4:
-    #         np_img_ms = {
-    #             "stage1": cv2.resize(np_img, (w//8, h//8), interpolation=cv2.INTER_NEAREST),
-    #             "stage2": cv2.resize(np_img, (w//4, h//4), interpolation=cv2.INTER_NEAREST),
-    #             "stage3": cv2.resize(np_img, (w//2, h//2), interpolation=cv2.INTER_NEAREST),
-    #             "stage4": np_img,
-    #         }
-    #     else:
-    #         np_img_ms = {
-    #             "stage1": cv2.resize(np_img, (w//4, h//4), interpolation=cv2.INTER_NEAREST),
-    #             "stage2": cv2.resize(np_img, (w//2, h//2), interpolation=cv2.INTER_NEAREST),
-    #             "stage3": np_img,
-    #         }
-    #     return np_img_ms
-
     def scale_img_cam(self, img, intrinsics, max_h, base=64):
         h, w = img.shape[:2]
         if h > max_h:
@@ -222,7 +210,7 @@ class BlendedMVSDataset(Dataset):
         scan, ref_view, src_views, scene_name = meta
         # use only the reference view and first nviews-1 source views
         if self.mode == 'train':
-            src_views = src_views[:7]
+            # src_views = src_views[:7]
             np.random.shuffle(src_views)
         view_ids = [ref_view] + src_views[:(self.nviews-1)]
         # view_ids = [ref_view] + src_views #[:self.nviews - 1]
@@ -240,7 +228,11 @@ class BlendedMVSDataset(Dataset):
             img, H_mat = self.read_img(img_filename, augmentation=True if self.mode == "train" else False)
             intrinsics, extrinsics, depth_min, depth_interval = self.read_cam_file(proj_mat_filename, H_mat)
 
-            img, intrinsics, scaled_h, scaled_w = self.scale_img_cam(img, intrinsics, max_h=512)
+            if self.kwargs["high_res"]:
+                max_h = int(1536 * self.image_scale) if self.mode == "train" else 576
+                img, intrinsics, scaled_h, scaled_w = self.scale_img_cam(img, intrinsics, max_h=max_h)
+            else:    
+                img, intrinsics, scaled_h, scaled_w = self.scale_img_cam(img, intrinsics, max_h=512)
 
             proj_mat = np.zeros(shape=(2, 4, 4), dtype=np.float32)  #
             proj_mat[0, :4, :4] = extrinsics

@@ -19,12 +19,17 @@ def read_pfm(filename):
         color = False
     else:
         raise Exception('Not a PFM file.')
-
-    dim_match = re.match(r'^(\d+)\s(\d+)\s(\d+)\s$', file.readline().decode('utf-8'))
+    line = file.readline().decode('utf-8')
+    dim_match = re.match(r'^(\d+)\s(\d+)\s(\d+)\s$', line)
     if dim_match:
         width, height, channel = map(int, dim_match.groups())
     else:
-        raise Exception('Malformed PFM header.')
+        dim_match = re.match(r'^(\d+)\s(\d+)\s$', line)
+        if dim_match:
+            width, height = map(int, dim_match.groups())
+            channel = 1
+        else:
+            raise Exception('Malformed PFM header.')
 
     scale = float(file.readline().rstrip())
     if scale < 0:  # little-endian

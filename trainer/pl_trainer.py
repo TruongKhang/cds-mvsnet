@@ -99,7 +99,7 @@ class PL_Trainer(pl.LightningModule):
             outputs = self.model(imgs, cam_params, depth_values, temperature=0.01)
 
             depth_est = outputs["out_depth"].detach()
-            di = depth_interval[0].item() / 2.65
+            di = depth_interval[0].item() / 2
             error_stats = {
                 "abs_depth_error": AbsDepthError_metrics(depth_est, depth_gt, mask > 0.5),
                 "prec@2mm": Thres_metrics(depth_est, depth_gt, mask > 0.5, di*2),
